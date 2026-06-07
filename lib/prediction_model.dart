@@ -67,6 +67,7 @@ class PredictionModel {
       homeModelScore: home.modelScore,
       awayModelScore: away.modelScore,
       factors: _factorsFor(core),
+      sourceLabel: version,
     );
   }
 

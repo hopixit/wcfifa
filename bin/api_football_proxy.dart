@@ -7,6 +7,7 @@ import 'package:xml/xml.dart';
 const _defaultHost = 'v3.football.api-sports.io';
 const _leagueId = '1';
 const _season = '2026';
+const _apiTimezone = 'Europe/Sofia';
 const _newsCacheTtl = Duration(minutes: 20);
 
 const _newsFeeds = [
@@ -95,6 +96,14 @@ class _ApiFootballProxy {
         await _handleNews(request);
         return;
       }
+      if (request.uri.path == '/api/worldcup/predictions') {
+        await _handlePredictions(request);
+        return;
+      }
+      if (request.uri.path == '/api/worldcup/results') {
+        await _handleResults(request);
+        return;
+      }
 
       final route = _routeFor(request.uri);
       if (route == null) {
@@ -131,7 +140,8 @@ class _ApiFootballProxy {
         if (value != null) request.response.headers.set(header, value);
       }
 
-      if (upstream.statusCode == HttpStatus.ok) {
+      if (upstream.statusCode == HttpStatus.ok &&
+          _shouldCacheApiBody(upstream.body)) {
         await _writeCache(route, upstream.body);
       }
       await _sendRawJson(request.response, upstream.statusCode, upstream.body);
@@ -154,7 +164,7 @@ class _ApiFootballProxy {
         params: {
           'league': _leagueId,
           'season': _season,
-          'timezone': uri.queryParameters['timezone'] ?? 'Europe/Sofia',
+          'timezone': uri.queryParameters['timezone'] ?? _apiTimezone,
         },
       );
     }
@@ -260,6 +270,331 @@ class _ApiFootballProxy {
       headers: response.headers,
       body: body,
     );
+  }
+
+  Future<void> _handlePredictions(HttpRequest request) async {
+    final force = request.uri.queryParameters['force'] == 'true';
+    final plan = _predictionRefreshPlan(DateTime.now());
+    final cacheRoute = _ProxyRoute(
+      endpoint: '/predictions',
+      cacheKey: plan.cacheKey,
+      ttl: plan.ttl,
+      params: const {},
+    );
+
+    if (!force) {
+      final cached = await _cachedResponse(cacheRoute);
+      if (cached != null) {
+        request.response.headers.set('x-cache', 'HIT');
+        await _sendRawJson(request.response, HttpStatus.ok, cached.body);
+        return;
+      }
+    }
+
+    final fixtures = await _fixturesForPredictions();
+    final selectedFixtures = fixtures
+        .where((fixture) => _predictionPlanIncludesFixture(plan, fixture))
+        .toList(growable: false);
+    if (selectedFixtures.isEmpty && plan.mode == 'pre_tournament_all') {
+      throw const _ProxyException(
+        'API-Football returned no accessible World Cup 2026 fixtures for the initial predictions snapshot.',
+      );
+    }
+    final predictions = <Map<String, Object?>>[];
+    final errors = <Map<String, Object?>>[];
+    int? requestsRemainingToday;
+
+    for (final fixture in selectedFixtures) {
+      final fixtureId = _apiFixtureId(fixture);
+      if (fixtureId == null) continue;
+
+      try {
+        final upstream = await _fetch(
+          _ProxyRoute(
+            endpoint: '/predictions',
+            cacheKey: 'prediction_$fixtureId',
+            ttl: Duration.zero,
+            params: {'fixture': fixtureId},
+          ),
+        );
+        final remaining = upstream.headers.value(
+          'x-ratelimit-requests-remaining',
+        );
+        requestsRemainingToday =
+            int.tryParse(remaining ?? '') ?? requestsRemainingToday;
+
+        if (upstream.statusCode < 200 || upstream.statusCode >= 300) {
+          errors.add({
+            'fixture': fixtureId,
+            'statusCode': upstream.statusCode,
+            'message': upstream.body,
+          });
+          continue;
+        }
+
+        final decoded = jsonDecode(upstream.body);
+        final root = _jsonMap(decoded);
+        final apiErrors = root['errors'];
+        if (apiErrors is Map && apiErrors.isNotEmpty) {
+          errors.add({
+            'fixture': fixtureId,
+            'statusCode': upstream.statusCode,
+            'message': jsonEncode(apiErrors),
+          });
+          continue;
+        }
+
+        predictions.add({'fixture': _fixtureSummary(fixture), 'payload': root});
+      } catch (error) {
+        errors.add({'fixture': fixtureId, 'message': '$error'});
+      }
+    }
+
+    final payload = jsonEncode({
+      'generatedAt': DateTime.now().toUtc().toIso8601String(),
+      'mode': plan.mode,
+      'date': plan.dateKey,
+      'dailyStartDate': '2026-06-11',
+      'cacheKey': plan.cacheKey,
+      'fixtureCount': selectedFixtures.length,
+      'requestCount': predictions.length + errors.length,
+      'requestsRemainingToday': requestsRemainingToday,
+      'errors': errors,
+      'response': predictions,
+    });
+
+    await _writeCache(cacheRoute, payload);
+    request.response.headers.set('x-cache', force ? 'REFRESH' : 'MISS');
+    await _sendRawJson(request.response, HttpStatus.ok, payload);
+  }
+
+  Future<void> _handleResults(HttpRequest request) async {
+    final force = request.uri.queryParameters['force'] == 'true';
+    final plan = _resultRefreshPlan(
+      DateTime.now(),
+      dateOverride: request.uri.queryParameters['date'],
+    );
+
+    if (!plan.enabled) {
+      await _sendJson(request.response, HttpStatus.ok, {
+        'generatedAt': DateTime.now().toUtc().toIso8601String(),
+        'mode': plan.mode,
+        'date': plan.dateKey,
+        'dailyStartDate': '2026-06-11',
+        'cacheKey': plan.cacheKey,
+        'fixtureCount': 0,
+        'requestCount': 0,
+        'requestsRemainingToday': null,
+        'errors': const [],
+        'response': const [],
+      });
+      return;
+    }
+
+    final cacheRoute = _ProxyRoute(
+      endpoint: '/fixtures',
+      cacheKey: plan.cacheKey,
+      ttl: plan.ttl,
+      params: const {},
+    );
+
+    if (!force) {
+      final cached = await _cachedResponse(cacheRoute);
+      if (cached != null) {
+        request.response.headers.set('x-cache', 'HIT');
+        await _sendRawJson(request.response, HttpStatus.ok, cached.body);
+        return;
+      }
+    }
+
+    final route = _ProxyRoute(
+      endpoint: '/fixtures',
+      cacheKey: 'results_upstream_${plan.dateKey}',
+      ttl: Duration.zero,
+      params: {
+        'league': _leagueId,
+        'season': _season,
+        'date': plan.dateKey,
+        'timezone': _apiTimezone,
+      },
+    );
+    final upstream = await _fetch(route);
+    if (upstream.statusCode < 200 || upstream.statusCode >= 300) {
+      throw _ProxyException(
+        'API-Football results returned HTTP ${upstream.statusCode}: ${upstream.body}',
+      );
+    }
+
+    final decoded = jsonDecode(upstream.body);
+    final root = _jsonMap(decoded);
+    final errors = root['errors'];
+    if (errors is Map && errors.isNotEmpty) {
+      throw _ProxyException(
+        'API-Football results error: ${jsonEncode(errors)}',
+      );
+    }
+    final response = root['response'] is List
+        ? root['response'] as List<dynamic>
+        : const <dynamic>[];
+    final remaining = upstream.headers.value('x-ratelimit-requests-remaining');
+
+    final payload = jsonEncode({
+      'generatedAt': DateTime.now().toUtc().toIso8601String(),
+      'mode': plan.mode,
+      'date': plan.dateKey,
+      'dailyStartDate': '2026-06-11',
+      'cacheKey': plan.cacheKey,
+      'fixtureCount': response.length,
+      'requestCount': 1,
+      'requestsRemainingToday': int.tryParse(remaining ?? ''),
+      'errors': const [],
+      'response': response,
+    });
+
+    await _writeCache(cacheRoute, payload);
+    request.response.headers.set('x-cache', force ? 'REFRESH' : 'MISS');
+    await _sendRawJson(request.response, HttpStatus.ok, payload);
+  }
+
+  Future<List<Map<String, dynamic>>> _fixturesForPredictions() async {
+    final route = const _ProxyRoute(
+      endpoint: '/fixtures',
+      cacheKey: 'fixtures',
+      ttl: Duration(minutes: 30),
+      params: {
+        'league': _leagueId,
+        'season': _season,
+        'timezone': _apiTimezone,
+      },
+    );
+    final cached = await _cachedResponse(route);
+    final body = cached?.body ?? (await _fetchAndCache(route)).body;
+    final decoded = jsonDecode(body);
+    final root = _jsonMap(decoded);
+    final errors = root['errors'];
+    if (errors is Map && errors.isNotEmpty) {
+      throw _ProxyException(
+        'API-Football fixtures error: ${jsonEncode(errors)}',
+      );
+    }
+    final response = root['response'];
+    if (response is! List) return const [];
+    return [for (final item in response) _jsonMap(item)];
+  }
+
+  Future<_UpstreamResponse> _fetchAndCache(_ProxyRoute route) async {
+    final upstream = await _fetch(route);
+    if (upstream.statusCode == HttpStatus.ok &&
+        _shouldCacheApiBody(upstream.body)) {
+      await _writeCache(route, upstream.body);
+    }
+    return upstream;
+  }
+
+  bool _predictionPlanIncludesFixture(
+    _PredictionRefreshPlan plan,
+    Map<String, dynamic> fixture,
+  ) {
+    if (_apiFixtureId(fixture) == null) return false;
+    if (!_hasConcreteTeams(fixture)) return false;
+    if (!_isWorldCupGroupFixture(fixture)) return false;
+
+    if (plan.mode == 'pre_tournament_all') return true;
+
+    final date = _fixtureLocalDate(fixture);
+    if (date == null) return false;
+    return _dateKey(date) == plan.dateKey;
+  }
+
+  _PredictionRefreshPlan _predictionRefreshPlan(DateTime now) {
+    final localNow = now.toLocal();
+    final dailyStart = DateTime(2026, 6, 11);
+    if (localNow.isBefore(dailyStart)) {
+      return const _PredictionRefreshPlan(
+        mode: 'pre_tournament_all',
+        dateKey: 'initial',
+        cacheKey: 'predictions_initial_all',
+        ttl: Duration(days: 365),
+      );
+    }
+
+    final dateKey = _dateKey(localNow);
+    return _PredictionRefreshPlan(
+      mode: 'match_day',
+      dateKey: dateKey,
+      cacheKey: 'predictions_day_$dateKey',
+      ttl: const Duration(hours: 26),
+    );
+  }
+
+  _ResultRefreshPlan _resultRefreshPlan(DateTime now, {String? dateOverride}) {
+    final dailyStart = DateTime(2026, 6, 11);
+    final overrideDate = _parseDateKey(dateOverride);
+    final localDate = overrideDate ?? now.toLocal();
+
+    if (overrideDate == null && localDate.isBefore(dailyStart)) {
+      return const _ResultRefreshPlan(
+        mode: 'pre_tournament_waiting',
+        dateKey: 'pre_tournament',
+        cacheKey: 'results_pre_tournament',
+        ttl: Duration(minutes: 5),
+        enabled: false,
+      );
+    }
+
+    final dateKey = _dateKey(localDate);
+    return _ResultRefreshPlan(
+      mode: 'match_day_results',
+      dateKey: dateKey,
+      cacheKey: 'results_day_$dateKey',
+      ttl: const Duration(minutes: 5),
+      enabled: true,
+    );
+  }
+
+  Map<String, Object?> _fixtureSummary(Map<String, dynamic> fixture) {
+    final fixtureData = _jsonMap(fixture['fixture']);
+    final league = _jsonMap(fixture['league']);
+    final teams = _jsonMap(fixture['teams']);
+    final home = _jsonMap(teams['home']);
+    final away = _jsonMap(teams['away']);
+
+    return {
+      'id': _apiFixtureId(fixture),
+      'date': fixtureData['date']?.toString(),
+      'round': league['round']?.toString(),
+      'home': {'id': _jsonInt(home['id']), 'name': home['name']?.toString()},
+      'away': {'id': _jsonInt(away['id']), 'name': away['name']?.toString()},
+    };
+  }
+
+  String? _apiFixtureId(Map<String, dynamic> fixture) {
+    final id = _jsonInt(_jsonMap(fixture['fixture'])['id']);
+    return id == null ? null : '$id';
+  }
+
+  bool _hasConcreteTeams(Map<String, dynamic> fixture) {
+    final teams = _jsonMap(fixture['teams']);
+    final home = _jsonMap(teams['home']);
+    final away = _jsonMap(teams['away']);
+    return _jsonInt(home['id']) != null &&
+        _jsonInt(away['id']) != null &&
+        (home['name']?.toString().trim().isNotEmpty ?? false) &&
+        (away['name']?.toString().trim().isNotEmpty ?? false);
+  }
+
+  bool _isWorldCupGroupFixture(Map<String, dynamic> fixture) {
+    final round = _jsonMap(fixture['league'])['round']?.toString() ?? '';
+    return RegExp(
+      r'Group\s+Stage|Group\s+[A-L]',
+      caseSensitive: false,
+    ).hasMatch(round);
+  }
+
+  DateTime? _fixtureLocalDate(Map<String, dynamic> fixture) {
+    final date = _jsonMap(fixture['fixture'])['date']?.toString();
+    if (date == null) return null;
+    return DateTime.tryParse(date)?.toLocal();
   }
 
   Future<void> _handleNews(HttpRequest request) async {
@@ -389,6 +724,36 @@ class _ApiFootballProxy {
     final haystack = '${item.title} ${item.summary} ${item.link}'.toLowerCase();
     return _worldCupNewsTerms.any(haystack.contains);
   }
+}
+
+class _PredictionRefreshPlan {
+  const _PredictionRefreshPlan({
+    required this.mode,
+    required this.dateKey,
+    required this.cacheKey,
+    required this.ttl,
+  });
+
+  final String mode;
+  final String dateKey;
+  final String cacheKey;
+  final Duration ttl;
+}
+
+class _ResultRefreshPlan {
+  const _ResultRefreshPlan({
+    required this.mode,
+    required this.dateKey,
+    required this.cacheKey,
+    required this.ttl,
+    required this.enabled,
+  });
+
+  final String mode;
+  final String dateKey;
+  final String cacheKey;
+  final Duration ttl;
+  final bool enabled;
 }
 
 class _NewsFeed {
@@ -624,6 +989,44 @@ DateTime? _parseRssDate(String value) {
     int.parse(match.group(6)!),
   );
   return local.subtract(offset);
+}
+
+String _dateKey(DateTime value) {
+  final month = value.month.toString().padLeft(2, '0');
+  final day = value.day.toString().padLeft(2, '0');
+  return '${value.year}-$month-$day';
+}
+
+DateTime? _parseDateKey(String? value) {
+  if (value == null || value.trim().isEmpty) return null;
+  final match = RegExp(r'^(\d{4})-(\d{2})-(\d{2})$').firstMatch(value.trim());
+  if (match == null) return null;
+  return DateTime(
+    int.parse(match.group(1)!),
+    int.parse(match.group(2)!),
+    int.parse(match.group(3)!),
+  );
+}
+
+Map<String, dynamic> _jsonMap(Object? value) {
+  if (value is Map) return value.cast<String, dynamic>();
+  return <String, dynamic>{};
+}
+
+int? _jsonInt(Object? value) {
+  if (value is int) return value;
+  if (value == null) return null;
+  return int.tryParse(value.toString());
+}
+
+bool _shouldCacheApiBody(String body) {
+  try {
+    final root = _jsonMap(jsonDecode(body));
+    final errors = root['errors'];
+    return errors is! Map || errors.isEmpty;
+  } catch (_) {
+    return false;
+  }
 }
 
 Duration _timezoneOffset(String value) {

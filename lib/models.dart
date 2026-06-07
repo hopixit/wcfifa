@@ -127,6 +127,7 @@ class Prediction {
     this.homeModelScore = 0,
     this.awayModelScore = 0,
     this.factors = const [],
+    this.sourceLabel = 'Local model',
   });
 
   final int homeWin;
@@ -142,6 +143,7 @@ class Prediction {
   final int homeModelScore;
   final int awayModelScore;
   final List<PredictionFactor> factors;
+  final String sourceLabel;
 
   String get score => '$predictedHomeGoals:$predictedAwayGoals';
 }
@@ -215,6 +217,31 @@ class TeamTournamentOutlook {
   final int semiFinal;
   final int finalChance;
   final int trophy;
+}
+
+class TeamWorldCupRecord {
+  const TeamWorldCupRecord({
+    required this.firstWorldCup,
+    required this.participationsBefore2026,
+    required this.played,
+    required this.wins,
+    required this.draws,
+    required this.losses,
+    required this.goalsScored,
+    required this.goalsConceded,
+  });
+
+  final int firstWorldCup;
+  final int participationsBefore2026;
+  final int played;
+  final int wins;
+  final int draws;
+  final int losses;
+  final int goalsScored;
+  final int goalsConceded;
+
+  int get participationIn2026 => participationsBefore2026 + 1;
+  bool get isDebut => participationsBefore2026 == 0;
 }
 
 class StandingRow {

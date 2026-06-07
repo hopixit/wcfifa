@@ -10,6 +10,7 @@ import 'news_feed_data.dart';
 import 'prediction_model.dart';
 import 'seed_data.dart';
 import 'squad_data.dart';
+import 'team_world_cup_record_data.dart';
 import 'tournament_power_data.dart';
 
 void main() {
@@ -37,7 +38,8 @@ class _SportApAppState extends State<SportApApp> {
   void initState() {
     super.initState();
     if (_apiEnabled) {
-      unawaited(_worldCupData.refreshFixtures());
+      _worldCupData.startResultPolling();
+      unawaited(_worldCupData.refreshApiData());
     }
   }
 
@@ -157,6 +159,7 @@ class AppShell extends StatefulWidget {
 
 class _AppShellState extends State<AppShell> {
   int _selectedIndex = 0;
+  bool _handledInitialTeamLink = false;
 
   static const _destinations = [
     _Destination('Home', Icons.dashboard_outlined, Icons.dashboard),
@@ -170,6 +173,22 @@ class _AppShellState extends State<AppShell> {
     _Destination('Teams', Icons.flag_outlined, Icons.flag),
     _Destination('News', Icons.article_outlined, Icons.article),
   ];
+
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted || _handledInitialTeamLink) return;
+      _handledInitialTeamLink = true;
+      final teamKey = Uri.base.queryParameters['team']?.trim().toLowerCase();
+      if (teamKey == null || teamKey.isEmpty) return;
+      final team = SeedData.teams.where((item) {
+        return item.id.toLowerCase() == teamKey ||
+            item.name.toLowerCase() == teamKey;
+      }).firstOrNull;
+      if (team != null) openTeamPage(context, team);
+    });
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -2052,7 +2071,7 @@ class HomeMatchListItem extends StatelessWidget {
   Widget build(BuildContext context) {
     final home = SeedData.teamById(match.homeTeamId);
     final away = SeedData.teamById(match.awayTeamId);
-    final prediction = PredictionModel().predict(match);
+    final prediction = predictionForMatch(context, match);
 
     return InkWell(
       onTap: () => showMatchDetails(context, match),
@@ -3192,18 +3211,35 @@ class ApiFootballStatusStrip extends StatelessWidget {
         ? Theme.of(context).colorScheme.primary
         : FifaColors.muted;
     final source = data.usingApiFixtures
-        ? 'API-Football fixtures'
+        ? data.rawResultCount > 0
+              ? 'API-Football fixtures + results'
+              : data.rawPredictionCount > 0
+              ? 'API-Football fixtures + predictions'
+              : 'API-Football fixtures'
         : data.apiEnabled
         ? 'Seed fallback'
         : 'Seed data';
     final details = [
       '${data.fixtures.length} matches',
       if (data.rawFixtureCount > 0) '${data.rawFixtureCount} raw API fixtures',
+      if (data.rawPredictionCount > 0)
+        '${data.rawPredictionCount} API predictions',
+      if (data.predictionRequestCount > 0)
+        '${data.predictionRequestCount} prediction calls',
+      if (data.rawResultCount > 0) '${data.rawResultCount} result fixtures',
+      if (data.resultRequestCount > 0)
+        '${data.resultRequestCount} result calls',
       if (data.requestsRemainingToday != null)
         '${data.requestsRemainingToday} requests left',
       if (data.lastSyncedAt != null)
         'Synced ${formatDateTime(data.lastSyncedAt!.toLocal())}',
+      if (data.lastPredictionsSyncedAt != null)
+        'Predictions ${formatDateTime(data.lastPredictionsSyncedAt!.toLocal())}',
+      if (data.lastResultsSyncedAt != null)
+        'Results ${formatDateTime(data.lastResultsSyncedAt!.toLocal())}',
       if (data.lastError != null) 'API unavailable',
+      if (data.lastPredictionError != null) 'Predictions unavailable',
+      if (data.lastResultError != null) 'Results unavailable',
     ].join(' • ');
 
     return Container(
@@ -3247,13 +3283,20 @@ class ApiFootballStatusStrip extends StatelessWidget {
           const SizedBox(width: 8),
           Tooltip(
             message: data.apiEnabled
-                ? 'Refresh API-Football fixtures'
+                ? 'Refresh API-Football fixtures and predictions'
                 : 'API-Football is disabled in this build',
             child: IconButton.filledTonal(
-              onPressed: data.apiEnabled && !data.isRefreshing
-                  ? () => unawaited(data.refreshFixtures())
+              onPressed:
+                  data.apiEnabled &&
+                      !data.isRefreshing &&
+                      !data.isRefreshingPredictions &&
+                      !data.isRefreshingResults
+                  ? () => unawaited(data.refreshApiData(forceResults: true))
                   : null,
-              icon: data.isRefreshing
+              icon:
+                  data.isRefreshing ||
+                      data.isRefreshingPredictions ||
+                      data.isRefreshingResults
                   ? const SizedBox(
                       width: 18,
                       height: 18,
@@ -3611,7 +3654,7 @@ class _MatchCardState extends State<MatchCard> {
     final match = widget.match;
     final home = SeedData.teamById(match.homeTeamId);
     final away = SeedData.teamById(match.awayTeamId);
-    final prediction = PredictionModel().predict(match);
+    final prediction = predictionForMatch(context, match);
 
     return Container(
       decoration: BoxDecoration(
@@ -3935,7 +3978,7 @@ class PredictionCardContent extends StatelessWidget {
               label:
                   '${confidenceLabel(prediction.confidence)} ${(prediction.confidence * 100).round()}%',
             ),
-            StatusPill(icon: Icons.functions, label: PredictionModel.version),
+            StatusPill(icon: Icons.functions, label: prediction.sourceLabel),
             StatusPill(
               icon: Icons.dataset_outlined,
               label: 'Data ${(prediction.dataQuality * 100).round()}%',
@@ -4442,6 +4485,12 @@ void showMatchDetails(BuildContext context, MatchEntry match) {
   );
 }
 
+Prediction predictionForMatch(BuildContext context, MatchEntry match) {
+  final localPrediction = PredictionModel().predict(match);
+  final apiPrediction = WorldCupDataScope.of(context).predictionFor(match);
+  return apiPrediction?.toPrediction(match, localPrediction) ?? localPrediction;
+}
+
 void openTeamPage(BuildContext context, Team team) {
   Navigator.of(
     context,
@@ -4512,6 +4561,7 @@ class TeamTabFrame extends StatelessWidget {
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
             TeamPageHeader(team: team, outlook: outlook, profile: profile),
+            TeamWorldCupRecordBand(team: team),
             Align(
               alignment: Alignment.topCenter,
               child: ConstrainedBox(
@@ -4644,6 +4694,301 @@ class TeamPageHeader extends StatelessWidget {
             },
           ),
         ),
+      ),
+    );
+  }
+}
+
+class TeamWorldCupRecordBand extends StatelessWidget {
+  const TeamWorldCupRecordBand({required this.team, super.key});
+
+  final Team team;
+
+  @override
+  Widget build(BuildContext context) {
+    final record = teamWorldCupRecords[team.id];
+    if (record == null) return const SizedBox.shrink();
+
+    return Container(
+      width: double.infinity,
+      color: FifaColors.surface,
+      padding: const EdgeInsets.fromLTRB(16, 16, 16, 0),
+      child: Center(
+        child: ConstrainedBox(
+          constraints: const BoxConstraints(maxWidth: 1180),
+          child: Container(
+            width: double.infinity,
+            padding: const EdgeInsets.all(16),
+            decoration: BoxDecoration(
+              color: FifaColors.white,
+              borderRadius: BorderRadius.circular(8),
+              border: Border.all(color: FifaColors.border),
+              boxShadow: [
+                BoxShadow(
+                  color: FifaColors.navy.withValues(alpha: 0.05),
+                  blurRadius: 18,
+                  offset: const Offset(0, 8),
+                ),
+              ],
+            ),
+            child: LayoutBuilder(
+              builder: (context, constraints) {
+                final compact = constraints.maxWidth < 760;
+                final topStats = [
+                  _WorldCupInfoMetric(
+                    label: 'First WC',
+                    value: '${record.firstWorldCup}',
+                  ),
+                  _WorldCupInfoMetric(
+                    label: 'Participations',
+                    value: record.isDebut
+                        ? 'Debut'
+                        : '${record.participationsBefore2026}',
+                    note: '${ordinal(record.participationIn2026)} in 2026',
+                  ),
+                  _WorldCupInfoMetric(label: 'Coach', value: team.coach),
+                ];
+                final recordMetrics = [
+                  _WorldCupRecordMetric(
+                    label: 'Played',
+                    value: record.played,
+                    color: FifaColors.navyAlt,
+                  ),
+                  _WorldCupRecordMetric(
+                    label: 'Wins',
+                    value: record.wins,
+                    color: const Color(0xFF23A96F),
+                  ),
+                  _WorldCupRecordMetric(
+                    label: 'Draws',
+                    value: record.draws,
+                    color: const Color(0xFFF4A32C),
+                  ),
+                  _WorldCupRecordMetric(
+                    label: 'Losses',
+                    value: record.losses,
+                    color: const Color(0xFFE95263),
+                  ),
+                  _WorldCupRecordMetric(
+                    label: 'Goals scored',
+                    value: record.goalsScored,
+                    color: FifaColors.orange,
+                  ),
+                  _WorldCupRecordMetric(
+                    label: 'Goals conceded',
+                    value: record.goalsConceded,
+                    color: FifaColors.muted,
+                  ),
+                ];
+
+                return Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Wrap(
+                      spacing: 8,
+                      runSpacing: 8,
+                      crossAxisAlignment: WrapCrossAlignment.center,
+                      children: const [
+                        StatusPill(
+                          icon: Icons.public,
+                          label: 'World Cup history',
+                        ),
+                        Tooltip(
+                          message: teamWorldCupRecordSourceName,
+                          child: StatusPill(
+                            icon: Icons.verified_outlined,
+                            label: 'API-Football cards',
+                          ),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 14),
+                    if (compact)
+                      Column(
+                        children: [
+                          for (final stat in topStats) ...[
+                            _WorldCupInfoTile(metric: stat, compact: true),
+                            if (stat != topStats.last)
+                              const SizedBox(height: 10),
+                          ],
+                        ],
+                      )
+                    else
+                      IntrinsicHeight(
+                        child: Row(
+                          children: [
+                            for (final stat in topStats) ...[
+                              Expanded(child: _WorldCupInfoTile(metric: stat)),
+                              if (stat != topStats.last)
+                                const VerticalDivider(
+                                  width: 24,
+                                  color: FifaColors.border,
+                                ),
+                            ],
+                          ],
+                        ),
+                      ),
+                    const SizedBox(height: 16),
+                    const Divider(height: 1, color: FifaColors.border),
+                    const SizedBox(height: 16),
+                    Text(
+                      'World Cup record',
+                      style: Theme.of(context).textTheme.labelLarge?.copyWith(
+                        color: FifaColors.muted,
+                        fontWeight: FontWeight.w900,
+                        letterSpacing: 1.4,
+                      ),
+                    ),
+                    const SizedBox(height: 12),
+                    LayoutBuilder(
+                      builder: (context, metricConstraints) {
+                        final columns = metricConstraints.maxWidth >= 980
+                            ? 6
+                            : metricConstraints.maxWidth >= 680
+                            ? 3
+                            : 2;
+                        final width =
+                            (metricConstraints.maxWidth - (columns - 1) * 10) /
+                            columns;
+
+                        return Wrap(
+                          spacing: 10,
+                          runSpacing: 10,
+                          children: [
+                            for (final metric in recordMetrics)
+                              SizedBox(
+                                width: width,
+                                child: _WorldCupRecordTile(metric: metric),
+                              ),
+                          ],
+                        );
+                      },
+                    ),
+                  ],
+                );
+              },
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _WorldCupInfoMetric {
+  const _WorldCupInfoMetric({
+    required this.label,
+    required this.value,
+    this.note,
+  });
+
+  final String label;
+  final String value;
+  final String? note;
+}
+
+class _WorldCupInfoTile extends StatelessWidget {
+  const _WorldCupInfoTile({required this.metric, this.compact = false});
+
+  final _WorldCupInfoMetric metric;
+  final bool compact;
+
+  @override
+  Widget build(BuildContext context) {
+    return SizedBox(
+      width: double.infinity,
+      child: Column(
+        crossAxisAlignment: compact
+            ? CrossAxisAlignment.start
+            : CrossAxisAlignment.center,
+        children: [
+          Text(
+            metric.label.toUpperCase(),
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: Theme.of(context).textTheme.labelMedium?.copyWith(
+              color: FifaColors.muted,
+              fontWeight: FontWeight.w900,
+              letterSpacing: 1.8,
+            ),
+          ),
+          const SizedBox(height: 6),
+          Text(
+            metric.value,
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            textAlign: compact ? TextAlign.start : TextAlign.center,
+            style: Theme.of(context).textTheme.headlineSmall?.copyWith(
+              color: FifaColors.navyAlt,
+              fontWeight: FontWeight.w900,
+            ),
+          ),
+          if (metric.note case final note?) ...[
+            const SizedBox(height: 2),
+            Text(
+              note,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                color: FifaColors.muted,
+                fontWeight: FontWeight.w700,
+              ),
+            ),
+          ],
+        ],
+      ),
+    );
+  }
+}
+
+class _WorldCupRecordMetric {
+  const _WorldCupRecordMetric({
+    required this.label,
+    required this.value,
+    required this.color,
+  });
+
+  final String label;
+  final int value;
+  final Color color;
+}
+
+class _WorldCupRecordTile extends StatelessWidget {
+  const _WorldCupRecordTile({required this.metric});
+
+  final _WorldCupRecordMetric metric;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: FifaColors.surface,
+        borderRadius: BorderRadius.circular(8),
+        border: Border.all(color: FifaColors.border),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            metric.label.toUpperCase(),
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: Theme.of(context).textTheme.labelSmall?.copyWith(
+              color: FifaColors.muted,
+              fontWeight: FontWeight.w900,
+              letterSpacing: 1.2,
+            ),
+          ),
+          const SizedBox(height: 8),
+          Text(
+            '${metric.value}',
+            style: Theme.of(context).textTheme.headlineSmall?.copyWith(
+              color: metric.color,
+              fontWeight: FontWeight.w900,
+            ),
+          ),
+        ],
       ),
     );
   }
@@ -5715,7 +6060,7 @@ class MatchDetailSheet extends StatelessWidget {
   Widget build(BuildContext context) {
     final home = SeedData.teamById(match.homeTeamId);
     final away = SeedData.teamById(match.awayTeamId);
-    final prediction = PredictionModel().predict(match);
+    final prediction = predictionForMatch(context, match);
 
     return SafeArea(
       child: DraggableScrollableSheet(
@@ -6282,6 +6627,17 @@ String formatDateTime(DateTime value) {
 
 String formatDate(DateTime value) {
   return '${_two(value.day)}.${_two(value.month)}';
+}
+
+String ordinal(int value) {
+  final mod100 = value % 100;
+  if (mod100 >= 11 && mod100 <= 13) return '${value}th';
+  return switch (value % 10) {
+    1 => '${value}st',
+    2 => '${value}nd',
+    3 => '${value}rd',
+    _ => '${value}th',
+  };
 }
 
 String _two(int value) => value.toString().padLeft(2, '0');

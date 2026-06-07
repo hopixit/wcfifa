@@ -26,16 +26,32 @@ class WorldCupDataController extends ChangeNotifier {
   WorldCupDataController({required this.apiEnabled, ApiFootballClient? client})
     : _client = client ?? ApiFootballClient();
 
+  static final DateTime _resultPollingStart = DateTime(2026, 6, 11);
+  static const Duration _resultPollingInterval = Duration(minutes: 5);
+  static const Duration _resultPollingWindow = Duration(minutes: 90);
+
   final bool apiEnabled;
   final ApiFootballClient _client;
 
   List<MatchEntry> _fixtures = SeedData.fixtures;
+  Timer? _resultTimer;
   bool _isRefreshing = false;
   bool _usingApiFixtures = false;
   String? _lastError;
   DateTime? _lastSyncedAt;
   int? _requestsRemainingToday;
   int _rawFixtureCount = 0;
+  bool _isRefreshingPredictions = false;
+  int _rawPredictionCount = 0;
+  int _predictionRequestCount = 0;
+  DateTime? _lastPredictionsSyncedAt;
+  String? _lastPredictionError;
+  final Map<String, ApiFixturePrediction> _predictionsByMatchId = {};
+  bool _isRefreshingResults = false;
+  int _rawResultCount = 0;
+  int _resultRequestCount = 0;
+  DateTime? _lastResultsSyncedAt;
+  String? _lastResultError;
   final Map<String, ApiTeamRoster> _teamRosters = {};
   final Map<String, Future<ApiTeamRoster?>> _teamRosterRequests = {};
   String? _lastRosterError;
@@ -47,8 +63,40 @@ class WorldCupDataController extends ChangeNotifier {
   DateTime? get lastSyncedAt => _lastSyncedAt;
   int? get requestsRemainingToday => _requestsRemainingToday;
   int get rawFixtureCount => _rawFixtureCount;
+  bool get isRefreshingPredictions => _isRefreshingPredictions;
+  int get rawPredictionCount => _rawPredictionCount;
+  int get predictionRequestCount => _predictionRequestCount;
+  DateTime? get lastPredictionsSyncedAt => _lastPredictionsSyncedAt;
+  String? get lastPredictionError => _lastPredictionError;
+  bool get isRefreshingResults => _isRefreshingResults;
+  int get rawResultCount => _rawResultCount;
+  int get resultRequestCount => _resultRequestCount;
+  DateTime? get lastResultsSyncedAt => _lastResultsSyncedAt;
+  String? get lastResultError => _lastResultError;
   String? get lastRosterError => _lastRosterError;
   ApiTeamRoster? rosterFor(Team team) => _teamRosters[team.id];
+  ApiFixturePrediction? predictionFor(MatchEntry match) {
+    return _predictionsByMatchId[match.id];
+  }
+
+  Future<void> refreshApiData({bool forceResults = false}) async {
+    await refreshFixtures();
+    if (forceResults || _shouldRefreshResultsNow(DateTime.now())) {
+      await refreshResults();
+    }
+  }
+
+  void startResultPolling() {
+    if (!apiEnabled || _resultTimer != null) return;
+    if (_shouldRefreshResultsNow(DateTime.now())) {
+      unawaited(refreshResults());
+    }
+    _resultTimer = Timer.periodic(_resultPollingInterval, (_) {
+      if (_shouldRefreshResultsNow(DateTime.now())) {
+        unawaited(refreshResults());
+      }
+    });
+  }
 
   Future<ApiTeamRoster?> syncTeamRoster(Team team) {
     if (!apiEnabled) return Future<ApiTeamRoster?>.value(null);
@@ -86,6 +134,7 @@ class WorldCupDataController extends ChangeNotifier {
         _lastSyncedAt = result.fetchedAt;
         _requestsRemainingToday = result.requestsRemainingToday;
         _rawFixtureCount = result.rawFixtureCount;
+        await refreshPredictions();
       } else {
         _lastError =
             'API-Football returned ${result.rawFixtureCount} fixtures, but none matched local teams.';
@@ -96,6 +145,124 @@ class WorldCupDataController extends ChangeNotifier {
       _isRefreshing = false;
       notifyListeners();
     }
+  }
+
+  Future<void> refreshPredictions() async {
+    if (!apiEnabled || _isRefreshingPredictions) return;
+
+    _isRefreshingPredictions = true;
+    _lastPredictionError = null;
+    notifyListeners();
+
+    try {
+      final result = await _client.fetchPredictions();
+      _predictionsByMatchId
+        ..clear()
+        ..addAll(result.predictionsByMatchId);
+      _rawPredictionCount = result.predictionsByMatchId.length;
+      _predictionRequestCount = result.requestCount;
+      _lastPredictionsSyncedAt = result.fetchedAt;
+      _requestsRemainingToday =
+          result.requestsRemainingToday ?? _requestsRemainingToday;
+    } catch (error) {
+      _lastPredictionError = '$error';
+    } finally {
+      _isRefreshingPredictions = false;
+      notifyListeners();
+    }
+  }
+
+  Future<void> refreshResults() async {
+    if (!apiEnabled || _isRefreshingResults) return;
+
+    _isRefreshingResults = true;
+    _lastResultError = null;
+    notifyListeners();
+
+    try {
+      final result = await _client.fetchResults();
+      _mergeResultFixtures(result.fixtures);
+      _rawResultCount = result.rawResultCount;
+      _resultRequestCount = result.requestCount;
+      _lastResultsSyncedAt = result.fetchedAt;
+      _requestsRemainingToday =
+          result.requestsRemainingToday ?? _requestsRemainingToday;
+    } catch (error) {
+      _lastResultError = '$error';
+    } finally {
+      _isRefreshingResults = false;
+      notifyListeners();
+    }
+  }
+
+  @override
+  void dispose() {
+    _resultTimer?.cancel();
+    super.dispose();
+  }
+
+  bool _shouldRefreshResultsNow(DateTime now) {
+    final localNow = now.toLocal();
+    if (localNow.isBefore(_resultPollingStart)) return false;
+
+    return _fixtures.any((match) {
+      final kickoff = match.kickoffUtc.toLocal();
+      final finishedPolling = kickoff.add(_resultPollingWindow);
+      return !localNow.isBefore(kickoff) && localNow.isBefore(finishedPolling);
+    });
+  }
+
+  void _mergeResultFixtures(List<MatchEntry> updates) {
+    if (updates.isEmpty) return;
+
+    final byId = {for (final match in updates) match.id: match};
+    final byMatchKey = {
+      for (final match in updates) _resultMergeKey(match): match,
+    };
+    final matchedUpdateIds = <String>{};
+    final merged = <MatchEntry>[];
+
+    for (final fixture in _fixtures) {
+      final update = byId[fixture.id] ?? byMatchKey[_resultMergeKey(fixture)];
+      if (update == null) {
+        merged.add(fixture);
+        continue;
+      }
+
+      matchedUpdateIds.add(update.id);
+      merged.add(_mergeResultIntoFixture(fixture, update));
+    }
+
+    if (_usingApiFixtures) {
+      for (final update in updates) {
+        if (!matchedUpdateIds.contains(update.id)) merged.add(update);
+      }
+    }
+
+    merged.sort((a, b) => a.kickoffUtc.compareTo(b.kickoffUtc));
+    _fixtures = merged;
+  }
+
+  String _resultMergeKey(MatchEntry match) {
+    final local = match.kickoffUtc.toLocal();
+    final month = local.month.toString().padLeft(2, '0');
+    final day = local.day.toString().padLeft(2, '0');
+    return '${local.year}-$month-$day:${match.group}:${match.homeTeamId}:${match.awayTeamId}';
+  }
+
+  MatchEntry _mergeResultIntoFixture(MatchEntry fixture, MatchEntry update) {
+    return MatchEntry(
+      id: fixture.id,
+      group: update.group,
+      homeTeamId: fixture.homeTeamId,
+      awayTeamId: fixture.awayTeamId,
+      kickoffUtc: update.kickoffUtc,
+      venue: update.venue,
+      city: update.city,
+      status: update.status,
+      homeScore: update.homeScore,
+      awayScore: update.awayScore,
+    );
   }
 }
 
@@ -150,6 +317,50 @@ class ApiFootballClient {
       requestsRemainingToday: int.tryParse(
         response.headers['x-ratelimit-requests-remaining'] ?? '',
       ),
+      fetchedAt: DateTime.now(),
+    );
+  }
+
+  Future<ApiFootballPredictionsResult> fetchPredictions() async {
+    final payload = await _getJson(_proxyUri('/api/worldcup/predictions'));
+    final rawItems = payload['response'] is List
+        ? payload['response'] as List<dynamic>
+        : const <dynamic>[];
+    final predictions = <String, ApiFixturePrediction>{};
+
+    for (final item in rawItems) {
+      final prediction = ApiFixturePrediction.fromAggregateItem(item);
+      if (prediction == null) continue;
+      predictions['api_${prediction.fixtureId}'] = prediction;
+    }
+
+    return ApiFootballPredictionsResult(
+      predictionsByMatchId: predictions,
+      requestCount: _asInt(payload['requestCount']) ?? rawItems.length,
+      requestsRemainingToday: _asInt(payload['requestsRemainingToday']),
+      fetchedAt: DateTime.now(),
+    );
+  }
+
+  Future<ApiFootballResultsResult> fetchResults() async {
+    final payload = await _getJson(_proxyUri('/api/worldcup/results'));
+    final rawItems = payload['response'] is List
+        ? payload['response'] as List<dynamic>
+        : const <dynamic>[];
+    final mapped = <MatchEntry>[];
+
+    for (final item in rawItems) {
+      final match = _matchFromApiFixture(item);
+      if (match != null) mapped.add(match);
+    }
+
+    mapped.sort((a, b) => a.kickoffUtc.compareTo(b.kickoffUtc));
+
+    return ApiFootballResultsResult(
+      fixtures: mapped,
+      rawResultCount: rawItems.length,
+      requestCount: _asInt(payload['requestCount']) ?? 0,
+      requestsRemainingToday: _asInt(payload['requestsRemainingToday']),
       fetchedAt: DateTime.now(),
     );
   }
@@ -424,6 +635,153 @@ class ApiFootballFixturesResult {
   final int rawFixtureCount;
   final int? requestsRemainingToday;
   final DateTime fetchedAt;
+}
+
+class ApiFootballPredictionsResult {
+  const ApiFootballPredictionsResult({
+    required this.predictionsByMatchId,
+    required this.requestCount,
+    required this.requestsRemainingToday,
+    required this.fetchedAt,
+  });
+
+  final Map<String, ApiFixturePrediction> predictionsByMatchId;
+  final int requestCount;
+  final int? requestsRemainingToday;
+  final DateTime fetchedAt;
+}
+
+class ApiFootballResultsResult {
+  const ApiFootballResultsResult({
+    required this.fixtures,
+    required this.rawResultCount,
+    required this.requestCount,
+    required this.requestsRemainingToday,
+    required this.fetchedAt,
+  });
+
+  final List<MatchEntry> fixtures;
+  final int rawResultCount;
+  final int requestCount;
+  final int? requestsRemainingToday;
+  final DateTime fetchedAt;
+}
+
+class ApiFixturePrediction {
+  const ApiFixturePrediction({
+    required this.fixtureId,
+    required this.homeWin,
+    required this.draw,
+    required this.awayWin,
+    required this.winnerName,
+    required this.advice,
+  });
+
+  final String fixtureId;
+  final int homeWin;
+  final int draw;
+  final int awayWin;
+  final String? winnerName;
+  final String? advice;
+
+  static ApiFixturePrediction? fromAggregateItem(Object? value) {
+    final item = ApiFootballClient._asMap(value);
+    final fixture = ApiFootballClient._asMap(item['fixture']);
+    final payload = ApiFootballClient._asMap(item['payload']);
+    final fixtureId = fixture['id']?.toString();
+    if (fixtureId == null || fixtureId.isEmpty) return null;
+
+    final responseItems = payload['response'] is List
+        ? payload['response'] as List<dynamic>
+        : const <dynamic>[];
+    if (responseItems.isEmpty) return null;
+
+    final response = ApiFootballClient._asMap(responseItems.first);
+    final predictions = ApiFootballClient._asMap(response['predictions']);
+    final percent = ApiFootballClient._asMap(predictions['percent']);
+    final values = _cleanPercentages([
+      _percentValue(percent['home']),
+      _percentValue(percent['draw']),
+      _percentValue(percent['away']),
+    ]);
+    if (values == null) return null;
+
+    final winner = ApiFootballClient._asMap(predictions['winner']);
+    final winnerName = winner['name']?.toString();
+
+    return ApiFixturePrediction(
+      fixtureId: fixtureId,
+      homeWin: values[0],
+      draw: values[1],
+      awayWin: values[2],
+      winnerName: winnerName == null || winnerName.trim().isEmpty
+          ? null
+          : winnerName,
+      advice: predictions['advice']?.toString(),
+    );
+  }
+
+  Prediction toPrediction(MatchEntry match, Prediction fallback) {
+    final ordered = [homeWin, draw, awayWin]..sort((a, b) => b.compareTo(a));
+    final spread = (ordered.first - ordered[1]) / 100;
+    final confidence = (spread * 0.7 + fallback.confidence * 0.3)
+        .clamp(0.08, 0.9)
+        .toDouble();
+    final notes = [
+      'API-Football daily prediction uses provider form, head-to-head and historical comparison.',
+      if (winnerName != null) 'Provider edge: $winnerName.',
+      if (advice != null && advice!.trim().isNotEmpty)
+        'Signal: ${advice!.trim()}.',
+      'Local score and xG stay as the fallback estimate.',
+    ].join(' ');
+
+    return Prediction(
+      homeWin: homeWin,
+      draw: draw,
+      awayWin: awayWin,
+      predictedHomeGoals: fallback.predictedHomeGoals,
+      predictedAwayGoals: fallback.predictedAwayGoals,
+      confidence: confidence,
+      explanation: notes,
+      expectedHomeGoals: fallback.expectedHomeGoals,
+      expectedAwayGoals: fallback.expectedAwayGoals,
+      dataQuality: fallback.dataQuality,
+      homeModelScore: fallback.homeModelScore,
+      awayModelScore: fallback.awayModelScore,
+      sourceLabel: 'API-Football daily',
+    );
+  }
+
+  static double? _percentValue(Object? value) {
+    if (value == null) return null;
+    final match = RegExp(r'-?\d+(?:[\.,]\d+)?').firstMatch(value.toString());
+    if (match == null) return null;
+    return double.tryParse(match.group(0)!.replaceAll(',', '.'));
+  }
+
+  static List<int>? _cleanPercentages(List<double?> values) {
+    if (values.any((value) => value == null)) return null;
+    final safe = values
+        .map((value) => value!.clamp(0.01, 98.0).toDouble())
+        .toList();
+    final total = safe.fold<double>(0, (sum, value) => sum + value);
+    if (total <= 0) return null;
+    final raw = safe.map((value) => value / total * 100).toList();
+    final floors = raw.map((value) => value.floor()).toList();
+    var remainder = 100 - floors.fold<int>(0, (sum, value) => sum + value);
+    final fractions = List.generate(
+      raw.length,
+      (index) => MapEntry(index, raw[index] - floors[index]),
+    )..sort((a, b) => b.value.compareTo(a.value));
+
+    for (final entry in fractions) {
+      if (remainder <= 0) break;
+      floors[entry.key] += 1;
+      remainder -= 1;
+    }
+
+    return floors;
+  }
 }
 
 class ApiTeamRoster {

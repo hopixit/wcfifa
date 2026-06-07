@@ -1,10 +1,16 @@
+import 'dart:convert';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:http/http.dart' as http;
+import 'package:http/testing.dart';
+import 'package:sport_ap/api_football_live_data.dart';
 import 'package:sport_ap/main.dart';
 import 'package:sport_ap/models.dart';
 import 'package:sport_ap/news_feed_data.dart';
 import 'package:sport_ap/prediction_model.dart';
 import 'package:sport_ap/seed_data.dart';
+import 'package:sport_ap/team_world_cup_record_data.dart';
 
 void main() {
   test('seed data covers the local group-stage prototype', () {
@@ -47,6 +53,15 @@ void main() {
     }
   });
 
+  test('every team has a World Cup history card', () {
+    expect(teamWorldCupRecords, hasLength(48));
+    for (final team in SeedData.teams) {
+      final record = teamWorldCupRecords[team.id];
+      expect(record, isNotNull, reason: '${team.name} needs record data');
+      expect(record!.played, record.wins + record.draws + record.losses);
+    }
+  });
+
   test('prediction model v2 returns bounded deterministic outputs', () {
     final model = PredictionModel();
 
@@ -76,6 +91,87 @@ void main() {
     expect(repeatedPrediction.draw, firstPrediction.draw);
     expect(repeatedPrediction.awayWin, firstPrediction.awayWin);
     expect(repeatedPrediction.score, firstPrediction.score);
+  });
+
+  test('api football prediction payload maps to display prediction', () {
+    final apiPrediction = ApiFixturePrediction.fromAggregateItem({
+      'fixture': {'id': '12345'},
+      'payload': {
+        'response': [
+          {
+            'predictions': {
+              'winner': {'name': 'Mexico'},
+              'advice': 'Mexico or draw',
+              'percent': {'home': '47%', 'draw': '29%', 'away': '24%'},
+            },
+          },
+        ],
+      },
+    });
+    final match = MatchEntry(
+      id: 'api_12345',
+      group: 'A',
+      homeTeamId: 'mex',
+      awayTeamId: 'rsa',
+      kickoffUtc: DateTime.utc(2026, 6, 11, 20),
+      venue: 'Mexico City Stadium',
+      city: 'Mexico City',
+      status: MatchStatus.upcoming,
+    );
+    final fallback = PredictionModel().predict(match);
+    final prediction = apiPrediction!.toPrediction(match, fallback);
+
+    expect(prediction.homeWin + prediction.draw + prediction.awayWin, 100);
+    expect(prediction.homeWin, 47);
+    expect(prediction.draw, 29);
+    expect(prediction.awayWin, 24);
+    expect(prediction.score, fallback.score);
+    expect(prediction.sourceLabel, 'API-Football daily');
+  });
+
+  test('api football results payload maps fixture scores', () async {
+    final client = ApiFootballClient(
+      proxyBaseUrl: 'http://proxy.test',
+      client: MockClient((request) async {
+        expect(request.url.path, '/api/worldcup/results');
+        return http.Response(
+          jsonEncode({
+            'response': [
+              {
+                'fixture': {
+                  'id': 12345,
+                  'date': '2026-06-11T20:00:00+00:00',
+                  'venue': {
+                    'name': 'Mexico City Stadium',
+                    'city': 'Mexico City',
+                  },
+                  'status': {'short': 'FT'},
+                },
+                'league': {'round': 'Group A'},
+                'teams': {
+                  'home': {'id': 16, 'name': 'Mexico'},
+                  'away': {'id': 29, 'name': 'South Africa'},
+                },
+                'goals': {'home': 2, 'away': 1},
+              },
+            ],
+            'requestCount': 1,
+            'requestsRemainingToday': 99,
+            'errors': {},
+          }),
+          200,
+        );
+      }),
+    );
+
+    final result = await client.fetchResults();
+    final match = result.fixtures.single;
+
+    expect(result.requestCount, 1);
+    expect(result.requestsRemainingToday, 99);
+    expect(match.id, 'api_12345');
+    expect(match.status, MatchStatus.finished);
+    expect(match.scoreLabel, '2:1');
   });
 
   test('tournament outlook is deterministic and monotonic', () {
