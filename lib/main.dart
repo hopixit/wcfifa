@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:url_launcher/url_launcher.dart';
 
+import 'article_embed_view.dart';
 import 'api_football_live_data.dart';
 import 'futures_market_data.dart';
 import 'models.dart';
@@ -2928,8 +2929,8 @@ class _NewsArticleCardState extends State<NewsArticleCard> {
                 Align(
                   alignment: Alignment.centerLeft,
                   child: TextButton.icon(
-                    onPressed: () => openExternalUrl(item.link),
-                    icon: const Icon(Icons.open_in_new, size: 18),
+                    onPressed: () => showNewsArticleDialog(context, item),
+                    icon: const Icon(Icons.article_outlined, size: 18),
                     label: Text('Full article at ${item.source}'),
                   ),
                 ),
@@ -2960,6 +2961,104 @@ class _NewsArticleCardState extends State<NewsArticleCard> {
       ),
     );
   }
+}
+
+Future<void> showNewsArticleDialog(BuildContext context, NewsArticle item) {
+  final title = newsDisplayTitle(item);
+
+  return showDialog<void>(
+    context: context,
+    barrierColor: FifaColors.navy.withValues(alpha: 0.72),
+    builder: (dialogContext) {
+      final media = MediaQuery.of(dialogContext);
+      final compact = media.size.width < 700;
+      final maxHeight = media.size.height * (compact ? 0.98 : 0.92);
+
+      return Dialog(
+        insetPadding: EdgeInsets.symmetric(
+          horizontal: compact ? 8 : 32,
+          vertical: compact ? 8 : 24,
+        ),
+        backgroundColor: FifaColors.white,
+        clipBehavior: Clip.antiAlias,
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+        child: ConstrainedBox(
+          constraints: BoxConstraints(maxWidth: 1120, maxHeight: maxHeight),
+          child: Column(
+            children: [
+              DecoratedBox(
+                decoration: const BoxDecoration(
+                  color: FifaColors.white,
+                  border: Border(bottom: BorderSide(color: FifaColors.border)),
+                ),
+                child: Padding(
+                  padding: EdgeInsets.fromLTRB(compact ? 10 : 14, 8, 6, 8),
+                  child: Row(
+                    children: [
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            Text(
+                              title,
+                              maxLines: compact ? 1 : 2,
+                              overflow: TextOverflow.ellipsis,
+                              style: Theme.of(dialogContext)
+                                  .textTheme
+                                  .titleSmall
+                                  ?.copyWith(fontWeight: FontWeight.w900),
+                            ),
+                            const SizedBox(height: 2),
+                            Text(
+                              item.source,
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: Theme.of(dialogContext)
+                                  .textTheme
+                                  .labelSmall
+                                  ?.copyWith(
+                                    color: FifaColors.muted,
+                                    fontWeight: FontWeight.w700,
+                                  ),
+                            ),
+                          ],
+                        ),
+                      ),
+                      const SizedBox(width: 8),
+                      if (compact)
+                        IconButton(
+                          tooltip: 'Open original article',
+                          onPressed: () => openExternalUrl(item.link),
+                          icon: const Icon(Icons.open_in_new),
+                        )
+                      else
+                        TextButton.icon(
+                          onPressed: () => openExternalUrl(item.link),
+                          icon: const Icon(Icons.open_in_new, size: 18),
+                          label: Text('Open at ${item.source}'),
+                        ),
+                      IconButton(
+                        tooltip: 'Close article',
+                        onPressed: () => Navigator.of(dialogContext).pop(),
+                        icon: const Icon(Icons.close),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+              Expanded(
+                child: ColoredBox(
+                  color: FifaColors.surface,
+                  child: ArticleEmbedView(url: item.link, title: title),
+                ),
+              ),
+            ],
+          ),
+        ),
+      );
+    },
+  );
 }
 
 class NewsLoadingList extends StatelessWidget {

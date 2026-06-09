@@ -2,6 +2,7 @@ import 'dart:convert';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:sport_ap/api_proxy_config.dart';
 import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
 import 'package:sport_ap/api_football_live_data.dart';
@@ -246,6 +247,41 @@ void main() {
     expect(result.totalMatched, 1);
   });
 
+  test('news client calls the configured API proxy route', () async {
+    final client = NewsFeedClient(
+      proxyBaseUrl: 'https://sport-ap.test',
+      client: MockClient((request) async {
+        expect(request.url.scheme, 'https');
+        expect(request.url.host, 'sport-ap.test');
+        expect(request.url.path, '/api/news');
+        expect(request.url.queryParameters, {
+          'source': 'espn',
+          'scope': 'worldcup',
+          'limit': '36',
+        });
+
+        return http.Response(
+          jsonEncode({
+            'generatedAt': '2026-06-09T13:20:00.000Z',
+            'totalFetched': 0,
+            'totalMatched': 0,
+            'errors': const [],
+            'items': const [],
+          }),
+          200,
+        );
+      }),
+    );
+
+    final result = await client.fetchNews(
+      source: NewsSourceFilter.espn,
+      scope: NewsScopeFilter.worldCup,
+    );
+
+    expect(result.items, isEmpty);
+    expect(defaultApiProxyBaseUrl(), 'http://127.0.0.1:8787');
+  });
+
   test('news helpers build readable quick takes', () {
     const article = NewsArticle(
       source: 'ESPN',
@@ -267,6 +303,47 @@ void main() {
     expect(quickTake, contains('According to ESPN, EA Sports'));
     expect(quickTake, contains('It also leaves this question open'));
     expect(quickTake, contains('analysis or prediction'));
+  });
+
+  testWidgets('news article button opens the original in a modal', (
+    tester,
+  ) async {
+    const article = NewsArticle(
+      source: 'ESPN',
+      sourceTitle: 'ESPN Soccer',
+      title: 'World Cup headline',
+      summary: 'A short RSS summary.',
+      link: 'https://www.espn.com/soccer/story/example',
+      publishedLabel: 'Sat, 6 Jun 2026 11:06:01 EST',
+      publishedAtMillis: 1780758361000,
+      imageUrl: null,
+    );
+
+    await tester.pumpWidget(
+      const MaterialApp(
+        home: Scaffold(
+          body: Padding(
+            padding: EdgeInsets.all(16),
+            child: NewsArticleCard(item: article),
+          ),
+        ),
+      ),
+    );
+
+    await tester.tap(find.text('Full article at ESPN'));
+    await tester.pumpAndSettle();
+
+    expect(find.byTooltip('Close article'), findsOneWidget);
+    expect(find.text('World Cup headline'), findsWidgets);
+    expect(
+      find.text('https://www.espn.com/soccer/story/example'),
+      findsOneWidget,
+    );
+
+    await tester.tap(find.byTooltip('Close article'));
+    await tester.pumpAndSettle();
+
+    expect(find.byTooltip('Close article'), findsNothing);
   });
 
   testWidgets('renders MVP shell and main navigation', (tester) async {

@@ -20,7 +20,7 @@ const _newsFeeds = [
   _NewsFeed(
     source: 'Sky Sports',
     title: 'Sky Sports Football',
-    url: 'http://www.skysports.com/rss/0,20514,11661,00.xml',
+    url: 'https://www.skysports.com/rss/11661',
     homeUrl: 'https://www.skysports.com/football',
   ),
 ];

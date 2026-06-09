@@ -4,6 +4,7 @@ import 'dart:convert';
 import 'package:flutter/widgets.dart';
 import 'package:http/http.dart' as http;
 
+import 'api_proxy_config.dart';
 import 'models.dart';
 import 'seed_data.dart';
 
@@ -269,12 +270,7 @@ class WorldCupDataController extends ChangeNotifier {
 class ApiFootballClient {
   ApiFootballClient({http.Client? client, String? proxyBaseUrl})
     : _client = client ?? http.Client(),
-      _proxyBaseUrl =
-          proxyBaseUrl ??
-          const String.fromEnvironment(
-            'API_PROXY_BASE_URL',
-            defaultValue: 'http://127.0.0.1:8787',
-          );
+      _proxyBaseUrl = proxyBaseUrl ?? defaultApiProxyBaseUrl();
 
   final http.Client _client;
   final String _proxyBaseUrl;
