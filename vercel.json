@@ -2,6 +2,11 @@
   "buildCommand": "bash scripts/vercel-build.sh",
   "installCommand": "echo \"Skipping package install\"",
   "outputDirectory": "build/web",
+  "functions": {
+    "api/worldcup/[route].js": {
+      "maxDuration": 300
+    }
+  },
   "rewrites": [
     {
       "source": "/((?!api(?:/.*)?$|.*\\..*$).*)",

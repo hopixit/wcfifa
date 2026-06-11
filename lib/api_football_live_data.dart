@@ -319,7 +319,10 @@ class ApiFootballClient {
 
   Future<ApiFootballPredictionsResult> fetchPredictions() async {
     final payload = await _getJson(
-      _proxyUri('/api/worldcup/predictions', {'scope': 'all'}),
+      _proxyUri('/api/worldcup/predictions', {
+        'scope': 'all',
+        'strategy': 'full',
+      }),
     );
     final rawItems = payload['response'] is List
         ? payload['response'] as List<dynamic>

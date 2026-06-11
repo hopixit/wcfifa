@@ -3,6 +3,8 @@ const leagueId = '1';
 const season = '2026';
 const apiTimezone = 'Europe/Sofia';
 const dailyStartDate = '2026-06-11';
+const predictionBatchSize = 4;
+const predictionBatchDelayMs = 11000;
 
 const endpointHelp = [
   { path: '/api/health', description: 'Proxy health check' },
@@ -430,6 +432,12 @@ function timeoutSignal(ms) {
   return controller.signal;
 }
 
+function sleep(ms) {
+  return new Promise((resolve) => {
+    setTimeout(resolve, ms);
+  });
+}
+
 function predictionRefreshPlan(now) {
   const localDateKey = dateKeyInTimeZone(now, apiTimezone);
   if (localDateKey < dailyStartDate) {
@@ -488,10 +496,9 @@ async function fetchPredictionsForFixtures(fixtures) {
   const predictions = [];
   const errors = [];
   let requestsRemainingToday = null;
-  const batchSize = 8;
 
-  for (let index = 0; index < fixtures.length; index += batchSize) {
-    const batch = fixtures.slice(index, index + batchSize);
+  for (let index = 0; index < fixtures.length; index += predictionBatchSize) {
+    const batch = fixtures.slice(index, index + predictionBatchSize);
     const results = await Promise.all(batch.map(fetchPredictionForFixture));
 
     for (const result of results) {
@@ -500,6 +507,10 @@ async function fetchPredictionsForFixtures(fixtures) {
       }
       if (result.prediction) predictions.push(result.prediction);
       if (result.error) errors.push(result.error);
+    }
+
+    if (index + predictionBatchSize < fixtures.length) {
+      await sleep(predictionBatchDelayMs);
     }
   }
 
