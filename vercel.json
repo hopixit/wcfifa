@@ -1,0 +1,11 @@
+{
+  "buildCommand": "bash scripts/vercel-build.sh",
+  "installCommand": "echo \"Skipping package install\"",
+  "outputDirectory": "build/web",
+  "rewrites": [
+    {
+      "source": "/((?!api(?:/.*)?$|.*\\..*$).*)",
+      "destination": "/index.html"
+    }
+  ]
+}

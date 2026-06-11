@@ -29,7 +29,7 @@ class WorldCupDataController extends ChangeNotifier {
 
   static final DateTime _resultPollingStart = DateTime(2026, 6, 11);
   static const Duration _resultPollingInterval = Duration(minutes: 5);
-  static const Duration _resultPollingWindow = Duration(minutes: 90);
+  static const Duration _resultPollingWindow = Duration(minutes: 180);
 
   final bool apiEnabled;
   final ApiFootballClient _client;
