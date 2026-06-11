@@ -9,7 +9,7 @@ const endpointHelp = [
   { path: '/api/news', description: 'World Cup RSS news' },
   { path: '/api/worldcup/fixtures', description: 'World Cup fixtures' },
   { path: '/api/worldcup/results', description: 'Match-day results' },
-  { path: '/api/worldcup/predictions', description: 'Match-day predictions' },
+  { path: '/api/worldcup/predictions', description: 'Group-stage predictions' },
   { path: '/api/worldcup/standings', description: 'Group standings' },
   { path: '/api/worldcup/teams', description: 'Tournament teams' },
   {
@@ -231,52 +231,8 @@ export async function handlePredictions(request, response) {
     const selectedFixtures = fixtures.filter((fixture) =>
       predictionPlanIncludesFixture(plan, fixture),
     );
-    const predictions = [];
-    const errors = [];
-    let requestsRemainingToday = null;
-
-    for (const fixture of selectedFixtures) {
-      const fixtureId = apiFixtureId(fixture);
-      if (!fixtureId) continue;
-
-      try {
-        const upstream = await fetchApiFootball('/predictions', {
-          fixture: fixtureId,
-        });
-        const remaining = asInt(
-          upstream.headers.get('x-ratelimit-requests-remaining'),
-        );
-        requestsRemainingToday = remaining ?? requestsRemainingToday;
-
-        if (upstream.status < 200 || upstream.status >= 300) {
-          errors.push({
-            fixture: fixtureId,
-            statusCode: upstream.status,
-            message: upstream.body,
-          });
-          continue;
-        }
-
-        const root = jsonMap(JSON.parse(upstream.body));
-        const apiErrors = root.errors;
-        if (
-          apiErrors &&
-          typeof apiErrors === 'object' &&
-          Object.keys(apiErrors).length > 0
-        ) {
-          errors.push({
-            fixture: fixtureId,
-            statusCode: upstream.status,
-            message: JSON.stringify(apiErrors),
-          });
-          continue;
-        }
-
-        predictions.push({ fixture: fixtureSummary(fixture), payload: root });
-      } catch (error) {
-        errors.push({ fixture: fixtureId, message: `${error}` });
-      }
-    }
+    const { predictions, errors, requestsRemainingToday } =
+      await fetchPredictionsForFixtures(selectedFixtures);
 
     const payload = {
       generatedAt: new Date().toISOString(),
@@ -486,9 +442,9 @@ function predictionRefreshPlan(now) {
   }
 
   return {
-    mode: 'match_day',
-    dateKey: localDateKey,
-    cacheKey: `predictions_day_${localDateKey}`,
+    mode: 'all_group_stage',
+    dateKey: 'all',
+    cacheKey: 'predictions_all_group_stage',
     ttlSeconds: 93600,
   };
 }
@@ -520,10 +476,85 @@ function predictionPlanIncludesFixture(plan, fixture) {
   if (!apiFixtureId(fixture)) return false;
   if (!hasConcreteTeams(fixture)) return false;
   if (!isWorldCupGroupFixture(fixture)) return false;
-  if (plan.mode === 'pre_tournament_all') return true;
+  if (plan.mode === 'pre_tournament_all' || plan.mode === 'all_group_stage') {
+    return true;
+  }
 
   const fixtureDateKey = fixtureLocalDateKey(fixture);
   return fixtureDateKey === plan.dateKey;
+}
+
+async function fetchPredictionsForFixtures(fixtures) {
+  const predictions = [];
+  const errors = [];
+  let requestsRemainingToday = null;
+  const batchSize = 8;
+
+  for (let index = 0; index < fixtures.length; index += batchSize) {
+    const batch = fixtures.slice(index, index + batchSize);
+    const results = await Promise.all(batch.map(fetchPredictionForFixture));
+
+    for (const result of results) {
+      if (result.requestsRemainingToday != null) {
+        requestsRemainingToday = result.requestsRemainingToday;
+      }
+      if (result.prediction) predictions.push(result.prediction);
+      if (result.error) errors.push(result.error);
+    }
+  }
+
+  return { predictions, errors, requestsRemainingToday };
+}
+
+async function fetchPredictionForFixture(fixture) {
+  const fixtureId = apiFixtureId(fixture);
+  if (!fixtureId) return {};
+
+  try {
+    const upstream = await fetchApiFootball('/predictions', {
+      fixture: fixtureId,
+    });
+    const requestsRemainingToday = asInt(
+      upstream.headers.get('x-ratelimit-requests-remaining'),
+    );
+
+    if (upstream.status < 200 || upstream.status >= 300) {
+      return {
+        requestsRemainingToday,
+        error: {
+          fixture: fixtureId,
+          statusCode: upstream.status,
+          message: upstream.body,
+        },
+      };
+    }
+
+    const root = jsonMap(JSON.parse(upstream.body));
+    const apiErrors = root.errors;
+    if (
+      apiErrors &&
+      typeof apiErrors === 'object' &&
+      Object.keys(apiErrors).length > 0
+    ) {
+      return {
+        requestsRemainingToday,
+        error: {
+          fixture: fixtureId,
+          statusCode: upstream.status,
+          message: JSON.stringify(apiErrors),
+        },
+      };
+    }
+
+    return {
+      requestsRemainingToday,
+      prediction: { fixture: fixtureSummary(fixture), payload: root },
+    };
+  } catch (error) {
+    return {
+      error: { fixture: fixtureId, message: `${error}` },
+    };
+  }
 }
 
 function fixtureSummary(fixture) {

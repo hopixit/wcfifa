@@ -41,7 +41,10 @@ const _apiEndpointHelp = <Map<String, String>>[
   {'path': '/api/news', 'description': 'World Cup RSS news'},
   {'path': '/api/worldcup/fixtures', 'description': 'World Cup fixtures'},
   {'path': '/api/worldcup/results', 'description': 'Match-day results'},
-  {'path': '/api/worldcup/predictions', 'description': 'Match-day predictions'},
+  {
+    'path': '/api/worldcup/predictions',
+    'description': 'Group-stage predictions',
+  },
   {'path': '/api/worldcup/standings', 'description': 'Group standings'},
   {'path': '/api/worldcup/teams', 'description': 'Tournament teams'},
   {
@@ -527,7 +530,9 @@ class _ApiFootballProxy {
     if (!_hasConcreteTeams(fixture)) return false;
     if (!_isWorldCupGroupFixture(fixture)) return false;
 
-    if (plan.mode == 'pre_tournament_all') return true;
+    if (plan.mode == 'pre_tournament_all' || plan.mode == 'all_group_stage') {
+      return true;
+    }
 
     final date = _fixtureLocalDate(fixture);
     if (date == null) return false;
@@ -546,12 +551,11 @@ class _ApiFootballProxy {
       );
     }
 
-    final dateKey = _dateKey(localNow);
-    return _PredictionRefreshPlan(
-      mode: 'match_day',
-      dateKey: dateKey,
-      cacheKey: 'predictions_day_$dateKey',
-      ttl: const Duration(hours: 26),
+    return const _PredictionRefreshPlan(
+      mode: 'all_group_stage',
+      dateKey: 'all',
+      cacheKey: 'predictions_all_group_stage',
+      ttl: Duration(hours: 26),
     );
   }
 
