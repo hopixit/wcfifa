@@ -112,7 +112,7 @@ function newsItemFromXml(feed, itemXml) {
         xmlText(itemXml, 'encoded') ||
         xmlText(itemXml, 'description'),
     ),
-    1200,
+    1800,
   );
   const publishedLabel = stripHtml(xmlText(itemXml, 'pubDate'));
   const publishedAt = Date.parse(publishedLabel);

@@ -282,7 +282,7 @@ void main() {
     expect(defaultApiProxyBaseUrl(), 'http://127.0.0.1:8787');
   });
 
-  test('news helpers build readable quick takes', () {
+  test('news helpers build seven-sentence news briefs', () {
     const article = NewsArticle(
       source: 'ESPN',
       sourceTitle: 'ESPN Soccer',
@@ -298,14 +298,23 @@ void main() {
 
     expect(newsDisplayTitle(article), isNot(contains('...')));
     expect(newsDisplayTitle(article), contains('USMNT'));
-    final quickTake = newsQuickTake(article);
-    expect(quickTake, startsWith('The story focuses on'));
-    expect(quickTake, contains('According to ESPN, EA Sports'));
-    expect(quickTake, contains('It also leaves this question open'));
-    expect(quickTake, contains('analysis or prediction'));
+    final briefSentences = newsBriefSentences(article);
+    final brief = briefSentences.join(' ');
+    expect(briefSentences, hasLength(7));
+    expect(brief, startsWith('ESPN published'));
+    expect(brief, contains('EA Sports has correctly predicted'));
+    expect(
+      brief,
+      contains(
+        'The main angle is predictions, expert picks, and tournament outlooks.',
+      ),
+    );
+    expect(brief, isNot(contains('available wording')));
+    expect(brief, isNot(contains('According to')));
+    expect(brief, isNot(contains('linked below')));
   });
 
-  testWidgets('news article button opens the original in a modal', (
+  testWidgets('news article button opens article content in a modal', (
     tester,
   ) async {
     const article = NewsArticle(
@@ -335,6 +344,9 @@ void main() {
 
     expect(find.byTooltip('Close article'), findsOneWidget);
     expect(find.text('World Cup headline'), findsWidgets);
+    expect(find.text('News brief'), findsWidgets);
+    expect(find.textContaining('A short RSS summary.'), findsWidgets);
+    expect(find.textContaining('The main angle is'), findsWidgets);
     expect(
       find.text('https://www.espn.com/soccer/story/example'),
       findsOneWidget,

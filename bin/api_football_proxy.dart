@@ -36,6 +36,27 @@ const _worldCupNewsTerms = [
   'световно',
 ];
 
+const _apiEndpointHelp = <Map<String, String>>[
+  {'path': '/api/health', 'description': 'Proxy health check'},
+  {'path': '/api/news', 'description': 'World Cup RSS news'},
+  {'path': '/api/worldcup/fixtures', 'description': 'World Cup fixtures'},
+  {'path': '/api/worldcup/results', 'description': 'Match-day results'},
+  {'path': '/api/worldcup/predictions', 'description': 'Match-day predictions'},
+  {'path': '/api/worldcup/standings', 'description': 'Group standings'},
+  {'path': '/api/worldcup/teams', 'description': 'Tournament teams'},
+  {
+    'path': '/api/worldcup/team-squad?team=16',
+    'description': 'Squad by API-Football team id',
+  },
+  {
+    'path': '/api/worldcup/team-coach?team=16',
+    'description': 'Coach by API-Football team id',
+  },
+  {'path': '/api/worldcup/top-scorers', 'description': 'Top scorers'},
+  {'path': '/api/worldcup/top-assists', 'description': 'Top assists'},
+  {'path': '/api/worldcup/status', 'description': 'API-Football status'},
+];
+
 Future<void> main() async {
   final localEnv = _readLocalEnv();
   final apiKey = _configValue('API_FOOTBALL_KEY', localEnv);
@@ -92,6 +113,10 @@ class _ApiFootballProxy {
     }
 
     try {
+      if (_isEndpointHelpPath(request.uri.path)) {
+        await _sendEndpointHelp(request.response, request.uri.path);
+        return;
+      }
       if (request.uri.path == '/api/news') {
         await _handleNews(request);
         return;
@@ -107,9 +132,12 @@ class _ApiFootballProxy {
 
       final route = _routeFor(request.uri);
       if (route == null) {
-        await _sendJson(request.response, HttpStatus.notFound, {
-          'error': 'Unknown endpoint',
-        });
+        await _sendEndpointHelp(
+          request.response,
+          request.uri.path,
+          statusCode: HttpStatus.notFound,
+          error: 'Unknown endpoint',
+        );
         return;
       }
 
@@ -882,6 +910,24 @@ String? _configValue(String key, Map<String, String> localEnv) {
   return null;
 }
 
+bool _isEndpointHelpPath(String path) =>
+    path == '/' || path == '/api' || path == '/api/worldcup';
+
+Future<void> _sendEndpointHelp(
+  HttpResponse response,
+  String requestedPath, {
+  int statusCode = HttpStatus.ok,
+  String? error,
+}) {
+  return _sendJson(response, statusCode, {
+    if (error != null) 'error': error,
+    'service': 'Sport AP API-Football proxy',
+    'requestedPath': requestedPath,
+    'baseUrl': 'http://127.0.0.1:8787',
+    'endpoints': _apiEndpointHelp,
+  });
+}
+
 void _setCors(HttpResponse response) {
   response.headers.set('Access-Control-Allow-Origin', '*');
   response.headers.set('Access-Control-Allow-Methods', 'GET, OPTIONS');
@@ -932,7 +978,7 @@ String _rssSummary(XmlElement item) {
     'encoded',
     'description',
   ]);
-  return _truncatePlainText(_stripHtml(raw), 1200);
+  return _truncatePlainText(_stripHtml(raw), 1800);
 }
 
 String _stripHtml(String value) {

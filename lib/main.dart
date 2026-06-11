@@ -3,7 +3,6 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:url_launcher/url_launcher.dart';
 
-import 'article_embed_view.dart';
 import 'api_football_live_data.dart';
 import 'futures_market_data.dart';
 import 'models.dart';
@@ -2831,8 +2830,9 @@ class _NewsArticleCardState extends State<NewsArticleCard> {
         ? item.publishedLabel
         : formatDateTime(publishedAt.toLocal());
     final displayTitle = newsDisplayTitle(item);
-    final quickTake = newsQuickTake(item);
-    final hasLongSummary = quickTake.length > 360;
+    final previewText = newsBriefText(item);
+    const previewLabel = 'News brief';
+    final hasLongSummary = previewText.length > 360;
 
     return Container(
       width: double.infinity,
@@ -2862,11 +2862,8 @@ class _NewsArticleCardState extends State<NewsArticleCard> {
                     if (dateLabel.isNotEmpty)
                       StatusPill(icon: Icons.schedule, label: dateLabel),
                     StatusPill(label: 'Provided by ${item.source}'),
-                    if (quickTake.isNotEmpty)
-                      const StatusPill(
-                        icon: Icons.short_text,
-                        label: 'Quick take',
-                      ),
+                    if (previewText.isNotEmpty)
+                      StatusPill(icon: Icons.short_text, label: previewLabel),
                   ],
                 ),
                 const SizedBox(height: 10),
@@ -2878,7 +2875,7 @@ class _NewsArticleCardState extends State<NewsArticleCard> {
                     fontWeight: FontWeight.w900,
                   ),
                 ),
-                if (quickTake.isNotEmpty) ...[
+                if (previewText.isNotEmpty) ...[
                   const SizedBox(height: 10),
                   Container(
                     width: double.infinity,
@@ -2894,7 +2891,7 @@ class _NewsArticleCardState extends State<NewsArticleCard> {
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
                         Text(
-                          'Quick take',
+                          previewLabel,
                           style: Theme.of(context).textTheme.labelLarge
                               ?.copyWith(
                                 color: FifaColors.blueDark,
@@ -2903,7 +2900,7 @@ class _NewsArticleCardState extends State<NewsArticleCard> {
                         ),
                         const SizedBox(height: 4),
                         Text(
-                          quickTake,
+                          previewText,
                           maxLines: _expanded ? 14 : 7,
                           overflow: TextOverflow.ellipsis,
                           style: Theme.of(context).textTheme.bodyMedium
@@ -2965,6 +2962,11 @@ class _NewsArticleCardState extends State<NewsArticleCard> {
 
 Future<void> showNewsArticleDialog(BuildContext context, NewsArticle item) {
   final title = newsDisplayTitle(item);
+  final briefText = newsBriefText(item);
+  final publishedAt = item.publishedAt;
+  final dateLabel = publishedAt == null
+      ? item.publishedLabel
+      : formatDateTime(publishedAt.toLocal());
 
   return showDialog<void>(
     context: context,
@@ -3050,7 +3052,21 @@ Future<void> showNewsArticleDialog(BuildContext context, NewsArticle item) {
               Expanded(
                 child: ColoredBox(
                   color: FifaColors.surface,
-                  child: ArticleEmbedView(url: item.link, title: title),
+                  child: SingleChildScrollView(
+                    padding: EdgeInsets.all(compact ? 14 : 24),
+                    child: Center(
+                      child: ConstrainedBox(
+                        constraints: const BoxConstraints(maxWidth: 820),
+                        child: NewsArticleDialogBody(
+                          item: item,
+                          title: title,
+                          briefText: briefText,
+                          dateLabel: dateLabel,
+                          compact: compact,
+                        ),
+                      ),
+                    ),
+                  ),
                 ),
               ),
             ],
@@ -3059,6 +3075,130 @@ Future<void> showNewsArticleDialog(BuildContext context, NewsArticle item) {
       );
     },
   );
+}
+
+class NewsArticleDialogBody extends StatelessWidget {
+  const NewsArticleDialogBody({
+    required this.item,
+    required this.title,
+    required this.briefText,
+    required this.dateLabel,
+    required this.compact,
+    super.key,
+  });
+
+  final NewsArticle item;
+  final String title;
+  final String briefText;
+  final String dateLabel;
+  final bool compact;
+
+  @override
+  Widget build(BuildContext context) {
+    final textTheme = Theme.of(context).textTheme;
+
+    return Container(
+      width: double.infinity,
+      padding: EdgeInsets.all(compact ? 16 : 22),
+      decoration: BoxDecoration(
+        color: FifaColors.white,
+        borderRadius: BorderRadius.circular(8),
+        border: Border.all(color: FifaColors.border),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Wrap(
+            spacing: 8,
+            runSpacing: 8,
+            children: [
+              StatusPill(icon: Icons.public, label: item.source),
+              if (dateLabel.isNotEmpty)
+                StatusPill(icon: Icons.schedule, label: dateLabel),
+              StatusPill(icon: Icons.rss_feed, label: item.sourceTitle),
+            ],
+          ),
+          const SizedBox(height: 14),
+          Text(
+            title,
+            style:
+                (compact ? textTheme.headlineSmall : textTheme.headlineMedium)
+                    ?.copyWith(fontWeight: FontWeight.w900, height: 1.08),
+          ),
+          if (item.imageUrl?.isNotEmpty == true) ...[
+            const SizedBox(height: 16),
+            ClipRRect(
+              borderRadius: BorderRadius.circular(8),
+              child: Image.network(
+                item.imageUrl!,
+                width: double.infinity,
+                height: compact ? 176 : 280,
+                fit: BoxFit.cover,
+                errorBuilder: (_, __, ___) => const SizedBox.shrink(),
+              ),
+            ),
+          ],
+          if (briefText.isNotEmpty) ...[
+            const SizedBox(height: 18),
+            Container(
+              width: double.infinity,
+              padding: const EdgeInsets.all(16),
+              decoration: BoxDecoration(
+                color: FifaColors.surface,
+                borderRadius: BorderRadius.circular(8),
+                border: Border.all(
+                  color: FifaColors.blue.withValues(alpha: 0.16),
+                ),
+              ),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    'News brief',
+                    style: textTheme.labelLarge?.copyWith(
+                      color: FifaColors.blueDark,
+                      fontWeight: FontWeight.w900,
+                    ),
+                  ),
+                  const SizedBox(height: 8),
+                  SelectableText(
+                    briefText,
+                    style: textTheme.bodyLarge?.copyWith(
+                      color: FifaColors.navy,
+                      height: 1.48,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ],
+          const SizedBox(height: 18),
+          Container(
+            width: double.infinity,
+            padding: const EdgeInsets.all(12),
+            decoration: BoxDecoration(
+              color: FifaColors.surface,
+              borderRadius: BorderRadius.circular(8),
+              border: Border.all(color: FifaColors.border),
+            ),
+            child: SelectableText(
+              item.link,
+              style: textTheme.bodySmall?.copyWith(color: FifaColors.muted),
+            ),
+          ),
+          const SizedBox(height: 14),
+          Align(
+            alignment: Alignment.centerLeft,
+            child: FilledButton.icon(
+              onPressed: () => openExternalUrl(item.link),
+              icon: const Icon(Icons.open_in_new, size: 18),
+              label: Text('Open at ${item.source}'),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
 }
 
 class NewsLoadingList extends StatelessWidget {
@@ -6525,35 +6665,50 @@ String newsDisplayTitle(NewsArticle item) {
   return title;
 }
 
-String newsQuickTake(NewsArticle item) {
-  final summary = _normalizeNewsText(item.summary);
+String newsSourceExcerpt(NewsArticle item) {
+  return _normalizeNewsText(item.summary);
+}
+
+String newsBriefText(NewsArticle item) {
+  return newsBriefSentences(item).join(' ');
+}
+
+List<String> newsBriefSentences(NewsArticle item) {
   final source = _normalizeNewsText(item.source).isEmpty
-      ? 'the source'
+      ? 'The source'
       : _normalizeNewsText(item.source);
+  final sourceTitle = _normalizeNewsText(item.sourceTitle).isEmpty
+      ? source
+      : _normalizeNewsText(item.sourceTitle);
   final title = newsDisplayTitle(item);
+  final summary = newsSourceExcerpt(item);
+  final date = _newsBriefDateLabel(item);
+  final topic = _newsBriefTopic(title: title, summary: summary);
   final sentences = <String>[
-    if (title.isNotEmpty) 'The story focuses on "$title".',
+    if (title.isNotEmpty) '$source published "$title".',
+    ..._newsSummarySentences(summary),
+    'The item is filed by $sourceTitle.',
+    if (date.isNotEmpty) 'It was published on $date.',
+    'The coverage is connected to the 2026 World Cup.',
+    'The main angle is $topic.',
   ];
 
-  final summarySentences = _newsSummarySentences(summary);
-  for (
-    var index = 0;
-    index < summarySentences.length && index < 2;
-    index += 1
-  ) {
-    sentences.add(_newsSummaryLine(source, summarySentences[index], index));
+  final unique = <String>[];
+  for (final sentence in sentences.map(_ensureEndingPunctuation)) {
+    if (sentence.trim().isEmpty || unique.contains(sentence)) continue;
+    unique.add(sentence);
+    if (unique.length == 7) break;
   }
 
-  for (final context in _newsContextSentences(
-    title: title,
-    summary: summary,
-    source: source,
-  )) {
-    if (sentences.length >= 5) break;
-    if (!sentences.contains(context)) sentences.add(context);
+  while (unique.length < 7) {
+    unique.add(_newsBriefFallbackSentence(unique.length, sourceTitle));
   }
 
-  return sentences.join(' ');
+  return unique;
+}
+
+String newsQuickTake(NewsArticle item) {
+  return newsBriefText(item);
 }
 
 List<String> _newsSummarySentences(String value) {
@@ -6567,32 +6722,8 @@ List<String> _newsSummarySentences(String value) {
       .toList(growable: false);
 }
 
-String _newsSummaryLine(String source, String sentence, int index) {
-  final clean = _ensureEndingPunctuation(sentence);
-  final startsAsQuestion = RegExp(
-    r'^(who|what|where|when|why|how)\b',
-    caseSensitive: false,
-  ).hasMatch(clean);
-  final isQuestion = startsAsQuestion || clean.endsWith('?');
-
-  if (isQuestion) {
-    return index == 0
-        ? '$source frames the story around this question: $clean'
-        : 'It also leaves this question open: $clean';
-  }
-
-  return index == 0
-      ? 'According to $source, ${_lowerFirstForIntro(clean)}'
-      : 'It also notes that ${_lowerFirstForIntro(clean)}';
-}
-
-List<String> _newsContextSentences({
-  required String title,
-  required String summary,
-  required String source,
-}) {
+String _newsBriefTopic({required String title, required String summary}) {
   final haystack = '$title $summary'.toLowerCase();
-  final sentences = <String>[];
 
   if (_containsAny(haystack, [
     'predict',
@@ -6604,14 +6735,16 @@ List<String> _newsContextSentences({
     'chance',
     'pick',
   ])) {
-    sentences.add(
-      'The available wording presents it as analysis or prediction, not as a confirmed result.',
-    );
+    return 'predictions, expert picks, and tournament outlooks';
   }
-  if (_containsAny(haystack, ['world cup', 'fifa', '2026', 'wc '])) {
-    sentences.add(
-      'It belongs to the World Cup coverage available in the $source RSS feed.',
-    );
+  if (_containsAny(haystack, ['opener', 'opening', 'kickoff', 'kick-off'])) {
+    return 'opening-day coverage and match preparation';
+  }
+  if (_containsAny(haystack, ['fixture', 'schedule', 'match', 'group'])) {
+    return 'fixtures, matches, and tournament scheduling';
+  }
+  if (_containsAny(haystack, ['player', 'squad', 'coach', 'team'])) {
+    return 'teams, players, and tournament selection';
   }
   if (_containsAny(haystack, [
     'ban',
@@ -6620,15 +6753,30 @@ List<String> _newsContextSentences({
     'decision',
     'rule',
   ])) {
-    sentences.add('The preview frames it as a tournament operations update.');
+    return 'tournament decisions, rules, and operations';
   }
-  if (sentences.length < 2) {
-    sentences.add(
-      'The card stays close to the RSS preview and leaves the full reporting to $source.',
-    );
+  if (_containsAny(haystack, ['world cup', 'fifa', '2026', 'wc '])) {
+    return 'World Cup coverage from the source feed';
   }
+  return 'football coverage from the source feed';
+}
 
-  return sentences;
+String _newsBriefDateLabel(NewsArticle item) {
+  final publishedAt = item.publishedAt;
+  if (publishedAt != null) return formatDateTime(publishedAt.toLocal());
+  return _normalizeNewsText(item.publishedLabel);
+}
+
+String _newsBriefFallbackSentence(int index, String sourceTitle) {
+  return switch (index) {
+    0 => '$sourceTitle published the item.',
+    1 => 'The article is part of the football news feed.',
+    2 => 'The item covers a current football topic.',
+    3 => 'The headline and summary define the confirmed scope.',
+    4 => 'The full report remains on the publisher page.',
+    5 => 'The publisher page carries the original article.',
+    _ => 'The source page carries the complete article.',
+  };
 }
 
 bool _containsAny(String value, List<String> needles) {
@@ -6642,17 +6790,6 @@ String _normalizeNewsText(String value) {
 String _ensureEndingPunctuation(String value) {
   if (value.isEmpty || RegExp(r'[.!?]$').hasMatch(value)) return value;
   return '$value.';
-}
-
-String _lowerFirstForIntro(String value) {
-  if (value.isEmpty) return value;
-  final firstWord = RegExp(r'^[A-Za-z]+').firstMatch(value)?.group(0);
-  if (firstWord != null &&
-      firstWord.length > 1 &&
-      firstWord == firstWord.toUpperCase()) {
-    return value;
-  }
-  return value[0].toLowerCase() + value.substring(1);
 }
 
 String? _titleFromNewsLink(String value) {
