@@ -1,11 +1,11 @@
 {
-    "name": "sport_ap",
-    "short_name": "sport_ap",
+    "name": "WORLD CUP 2026",
+    "short_name": "WORLD CUP 2026",
     "start_url": ".",
     "display": "standalone",
     "background_color": "#0175C2",
     "theme_color": "#0175C2",
-    "description": "A new Flutter project.",
+    "description": "Predictions & Fixtures",
     "orientation": "portrait-primary",
     "prefer_related_applications": false,
     "icons": [

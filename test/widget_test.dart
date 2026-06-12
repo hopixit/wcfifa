@@ -466,7 +466,7 @@ void main() {
   testWidgets('renders MVP shell and main navigation', (tester) async {
     await tester.pumpWidget(const SportApApp());
 
-    expect(find.text('World Cup 2026'), findsOneWidget);
+    expect(find.text('WORLD CUP 2026'), findsOneWidget);
     expect(find.text('World Cup Futures Dashboard'), findsOneWidget);
     expect(find.text('Golden Boot Favorites'), findsOneWidget);
     expect(find.text('Assist Kings'), findsOneWidget);
@@ -511,7 +511,7 @@ void main() {
 
     await tester.pumpWidget(const SportApApp());
 
-    expect(find.text('Predictions and teams'), findsOneWidget);
+    expect(find.text('Predictions & Fixtures'), findsOneWidget);
     expect(find.byType(NavigationBar), findsNothing);
 
     await tester.tap(find.text('Schedule & Predictions').first);

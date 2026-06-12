@@ -55,7 +55,7 @@ class _SportApAppState extends State<SportApApp> {
       controller: _worldCupData,
       child: MaterialApp(
         debugShowCheckedModeBanner: false,
-        title: 'World Cup 2026 Predictions',
+        title: 'WORLD CUP 2026',
         theme: ThemeData(
           useMaterial3: true,
           colorScheme: const ColorScheme.light(
@@ -198,7 +198,6 @@ class _AppShellState extends State<AppShell> {
     return LayoutBuilder(
       builder: (context, constraints) {
         final wide = constraints.maxWidth >= 920;
-        final selected = _destinations[_selectedIndex];
         final homeFavorites = _selectedIndex == 0
             ? tournamentFavorites(limit: 10)
             : const <TournamentFavorite>[];
@@ -239,9 +238,9 @@ class _AppShellState extends State<AppShell> {
                 : Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      const Text('World Cup 2026'),
+                      const Text('WORLD CUP 2026'),
                       Text(
-                        selected.label,
+                        'Predictions & Fixtures',
                         style: Theme.of(context).textTheme.labelLarge?.copyWith(
                           color: FifaColors.blue,
                         ),
@@ -421,14 +420,14 @@ class HeaderBrand extends StatelessWidget {
           mainAxisSize: MainAxisSize.min,
           children: [
             Text(
-              'World Cup 2026',
+              'WORLD CUP 2026',
               style: Theme.of(context).textTheme.titleMedium?.copyWith(
                 color: FifaColors.white,
                 fontWeight: FontWeight.w900,
               ),
             ),
             Text(
-              'Predictions and teams',
+              'Predictions & Fixtures',
               style: Theme.of(context).textTheme.labelSmall?.copyWith(
                 color: FifaColors.border,
                 fontWeight: FontWeight.w600,
