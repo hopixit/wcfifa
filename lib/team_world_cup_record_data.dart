@@ -1,7 +1,7 @@
 import 'models.dart';
 
 const teamWorldCupRecordSourceName =
-    'API-Football 2026 team cards + historical World Cup record';
+    'Verified team cards and historical World Cup record';
 const teamWorldCupRecordSourceUrl =
     'https://www.api-football.com/news/post/fifa-world-cup-2026-lineups-all-teams-coaches-and-players';
 

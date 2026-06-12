@@ -195,7 +195,6 @@ class _AppShellState extends State<AppShell> {
 
   @override
   Widget build(BuildContext context) {
-    final worldCupData = WorldCupDataScope.of(context);
     return LayoutBuilder(
       builder: (context, constraints) {
         final wide = constraints.maxWidth >= 920;
@@ -207,6 +206,9 @@ class _AppShellState extends State<AppShell> {
           HomeScreen(
             onViewAllMatches: () =>
                 setState(() => _selectedIndex = _resultsIndex),
+            onOpenSchedule: () => setState(() => _selectedIndex = 1),
+            onOpenGroups: () => setState(() => _selectedIndex = 3),
+            onOpenTeams: () => setState(() => _selectedIndex = 4),
           ),
           const MatchesScreen(),
           const ResultsScreen(),
@@ -257,18 +259,6 @@ class _AppShellState extends State<AppShell> {
                   tooltip: 'Search team',
                   icon: const Icon(Icons.search),
                   onPressed: () => showTeamSearchSheet(context),
-                ),
-              if (wide && constraints.maxWidth >= 1180)
-                Padding(
-                  padding: const EdgeInsets.only(right: 16),
-                  child: Center(
-                    child: StatusPill(
-                      icon: Icons.sync,
-                      label: worldCupData.usingApiFixtures
-                          ? 'API: ${worldCupData.requestsRemainingToday ?? '?'} left'
-                          : 'Seed: ${formatDate(SeedData.lastUpdatedUtc.toLocal())}',
-                    ),
-                  ),
                 ),
             ],
           ),
@@ -705,9 +695,18 @@ class _TeamSearchSheetState extends State<TeamSearchSheet> {
 }
 
 class HomeScreen extends StatelessWidget {
-  const HomeScreen({required this.onViewAllMatches, super.key});
+  const HomeScreen({
+    required this.onViewAllMatches,
+    required this.onOpenSchedule,
+    required this.onOpenGroups,
+    required this.onOpenTeams,
+    super.key,
+  });
 
   final VoidCallback onViewAllMatches;
+  final VoidCallback onOpenSchedule;
+  final VoidCallback onOpenGroups;
+  final VoidCallback onOpenTeams;
 
   @override
   Widget build(BuildContext context) {
@@ -784,7 +783,11 @@ class HomeScreen extends StatelessWidget {
             ],
           ),
           const SizedBox(height: 24),
-          const HomeFooter(),
+          HomeFooter(
+            onOpenSchedule: onOpenSchedule,
+            onOpenGroups: onOpenGroups,
+            onOpenTeams: onOpenTeams,
+          ),
         ],
       ),
     );
@@ -2139,13 +2142,13 @@ class HomeStatsGrid extends StatelessWidget {
         color: FifaColors.orange,
       ),
       _HomeStat(
-        label: 'Seed matches',
+        label: 'Matches',
         value: '$totalMatches',
         icon: Icons.event,
         color: FifaColors.red,
       ),
       const _HomeStat(
-        label: 'Model',
+        label: 'Forecast',
         value: PredictionModel.version,
         icon: Icons.functions,
         color: FifaColors.deepBlue,
@@ -2450,7 +2453,7 @@ class HomeProgramPanel extends StatelessWidget {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Text('${SeedData.fixtures.length} seeded group-stage fixtures'),
+          Text('${SeedData.fixtures.length} group-stage fixtures'),
           const SizedBox(height: 10),
           if (next != null)
             Text(
@@ -2480,7 +2483,7 @@ class HomeTeamsPanel extends StatelessWidget {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Text('${SeedData.teams.length} qualified teams in this prototype'),
+          Text('${SeedData.teams.length} qualified teams'),
           const SizedBox(height: 10),
           for (final favorite in favorites.take(3))
             Padding(
@@ -2582,7 +2585,16 @@ class _HomeInfoPanel extends StatelessWidget {
 }
 
 class HomeFooter extends StatelessWidget {
-  const HomeFooter({super.key});
+  const HomeFooter({
+    required this.onOpenSchedule,
+    required this.onOpenGroups,
+    required this.onOpenTeams,
+    super.key,
+  });
+
+  final VoidCallback onOpenSchedule;
+  final VoidCallback onOpenGroups;
+  final VoidCallback onOpenTeams;
 
   @override
   Widget build(BuildContext context) {
@@ -2597,17 +2609,20 @@ class HomeFooter extends StatelessWidget {
         builder: (context, constraints) {
           final compact = constraints.maxWidth < 720;
           final content = [
-            const _FooterColumn(
+            _FooterColumn(
               title: 'Program',
               lines: ['Full group schedule', 'Kickoff time and venues'],
+              onTap: onOpenSchedule,
             ),
-            const _FooterColumn(
+            _FooterColumn(
               title: 'Teams',
-              lines: ['48 team profiles', 'Squads, form and Elo'],
+              lines: ['48 team profiles', 'Squads, form and ranking'],
+              onTap: onOpenTeams,
             ),
-            const _FooterColumn(
-              title: 'Best chance to advance',
-              lines: ['Round of 32 leaders', 'Elo-calibrated outlooks'],
+            _FooterColumn(
+              title: 'Groups',
+              lines: ['Group tables', 'Top-three qualification picture'],
+              onTap: onOpenGroups,
             ),
           ];
 
@@ -2676,32 +2691,58 @@ class HopixFooterLink extends StatelessWidget {
 }
 
 class _FooterColumn extends StatelessWidget {
-  const _FooterColumn({required this.title, required this.lines});
+  const _FooterColumn({
+    required this.title,
+    required this.lines,
+    required this.onTap,
+  });
 
   final String title;
   final List<String> lines;
+  final VoidCallback onTap;
 
   @override
   Widget build(BuildContext context) {
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Text(
-          title,
-          style: Theme.of(context).textTheme.titleSmall?.copyWith(
-            color: FifaColors.white,
-            fontWeight: FontWeight.w900,
+    return Material(
+      color: Colors.transparent,
+      child: InkWell(
+        borderRadius: BorderRadius.circular(8),
+        onTap: onTap,
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(
+                children: [
+                  Expanded(
+                    child: Text(
+                      title,
+                      style: Theme.of(context).textTheme.titleSmall?.copyWith(
+                        color: FifaColors.white,
+                        fontWeight: FontWeight.w900,
+                      ),
+                    ),
+                  ),
+                  const Icon(
+                    Icons.arrow_forward,
+                    color: FifaColors.blue,
+                    size: 16,
+                  ),
+                ],
+              ),
+              const SizedBox(height: 8),
+              for (final line in lines)
+                Text(
+                  line,
+                  style: Theme.of(
+                    context,
+                  ).textTheme.bodySmall?.copyWith(color: FifaColors.border),
+                ),
+            ],
           ),
         ),
-        const SizedBox(height: 8),
-        for (final line in lines)
-          Text(
-            line,
-            style: Theme.of(
-              context,
-            ).textTheme.bodySmall?.copyWith(color: FifaColors.border),
-          ),
-      ],
+      ),
     );
   }
 }
@@ -2802,8 +2843,6 @@ class _MatchesScreenState extends State<MatchesScreen> {
                 'Filter by group or status, then expand a fixture for model details',
           ),
           const SizedBox(height: 12),
-          ApiFootballStatusStrip(data: worldCupData),
-          const SizedBox(height: 12),
           FilterStrip(
             group: _group,
             status: _status,
@@ -2833,10 +2872,8 @@ class ResultsScreen extends StatelessWidget {
         children: [
           const SectionHeader(
             title: 'Results',
-            subtitle: 'Chronological match list with scores as they arrive',
+            subtitle: 'Chronological match list with scores and match details',
           ),
-          const SizedBox(height: 12),
-          ApiFootballStatusStrip(data: worldCupData),
           const SizedBox(height: 12),
           ResultsMatchList(matches: matches),
         ],
@@ -2920,7 +2957,7 @@ class _NewsScreenState extends State<NewsScreen> {
         children: [
           const SectionHeader(
             title: 'News',
-            subtitle: 'World Cup headlines from ESPN and Sky Sports RSS',
+            subtitle: 'World Cup headlines from trusted football sources',
           ),
           const SizedBox(height: 12),
           NewsControls(
@@ -2951,7 +2988,7 @@ class _NewsScreenState extends State<NewsScreen> {
             const EmptyState(
               icon: Icons.article_outlined,
               title: 'No headlines',
-              body: 'Try All Football or refresh the RSS feeds.',
+              body: 'Try All Football or refresh the news feed.',
             )
           else
             NewsArticleList(items: items),
@@ -3021,10 +3058,10 @@ class NewsControls extends StatelessWidget {
             selected: {source},
             onSelectionChanged: (value) => onSourceChanged(value.first),
           ),
-          StatusPill(icon: Icons.rss_feed, label: 'RSS'),
+          StatusPill(icon: Icons.article_outlined, label: 'Latest news'),
           if (details.isNotEmpty) StatusPill(label: details),
           Tooltip(
-            message: 'Refresh RSS feeds',
+            message: 'Refresh news',
             child: IconButton.filledTonal(
               onPressed: loading ? null : onRefresh,
               icon: loading
@@ -3514,7 +3551,7 @@ class GroupsScreen extends StatelessWidget {
           const SectionHeader(
             title: 'Groups',
             subtitle:
-                'Standings from seed results, with FIFA ranking as tie-breaker',
+                'Standings with goal difference, points and qualification places',
           ),
           const SizedBox(height: 12),
           for (final group in SeedData.groups) ...[
@@ -3641,160 +3678,6 @@ class PageFrame extends StatelessWidget {
             child: child,
           ),
         ),
-      ),
-    );
-  }
-}
-
-class DataNotice extends StatelessWidget {
-  const DataNotice({this.compact = false, super.key});
-
-  final bool compact;
-
-  @override
-  Widget build(BuildContext context) {
-    return Card(
-      child: Padding(
-        padding: const EdgeInsets.all(16),
-        child: Row(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Icon(
-              Icons.offline_bolt,
-              color: Theme.of(context).colorScheme.primary,
-            ),
-            const SizedBox(width: 12),
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(
-                    'Local Algorithm v2 mode',
-                    style: Theme.of(context).textTheme.titleMedium,
-                  ),
-                  const SizedBox(height: 4),
-                  Text(
-                    compact
-                        ? 'Predictions come from a Poisson seed model. A live API/backend can replace synthetic form, xG and availability data.'
-                        : 'The app uses a Poisson seed model, squad data and local tournament simulation. A backend/API layer can replace synthetic form, xG and availability data without changing navigation.',
-                    style: Theme.of(context).textTheme.bodyMedium,
-                  ),
-                ],
-              ),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-}
-
-class ApiFootballStatusStrip extends StatelessWidget {
-  const ApiFootballStatusStrip({required this.data, super.key});
-
-  final WorldCupDataController data;
-
-  @override
-  Widget build(BuildContext context) {
-    final color = data.usingApiFixtures
-        ? Theme.of(context).colorScheme.primary
-        : FifaColors.muted;
-    final source = data.usingApiFixtures
-        ? data.rawResultCount > 0
-              ? 'API-Football fixtures + results'
-              : data.rawPredictionCount > 0
-              ? 'API-Football fixtures + predictions'
-              : 'API-Football fixtures'
-        : data.apiEnabled
-        ? 'Seed fallback'
-        : 'Seed data';
-    final details = [
-      '${data.fixtures.length} matches',
-      if (data.rawFixtureCount > 0) '${data.rawFixtureCount} raw API fixtures',
-      if (data.rawPredictionCount > 0)
-        '${data.rawPredictionCount} API predictions',
-      if (data.predictionRequestCount > 0)
-        '${data.predictionRequestCount} prediction calls',
-      if (data.rawResultCount > 0) '${data.rawResultCount} result fixtures',
-      if (data.resultRequestCount > 0)
-        '${data.resultRequestCount} result calls',
-      if (data.requestsRemainingToday != null)
-        '${data.requestsRemainingToday} requests left',
-      if (data.lastSyncedAt != null)
-        'Synced ${formatDateTime(data.lastSyncedAt!.toLocal())}',
-      if (data.lastPredictionsSyncedAt != null)
-        'Predictions ${formatDateTime(data.lastPredictionsSyncedAt!.toLocal())}',
-      if (data.lastResultsSyncedAt != null)
-        'Results ${formatDateTime(data.lastResultsSyncedAt!.toLocal())}',
-      if (data.lastError != null) 'API unavailable',
-      if (data.lastPredictionError != null) 'Predictions unavailable',
-      if (data.lastResultError != null) 'Results unavailable',
-    ].join(' • ');
-
-    return Container(
-      width: double.infinity,
-      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
-      decoration: BoxDecoration(
-        color: FifaColors.white,
-        borderRadius: BorderRadius.circular(8),
-        border: Border.all(color: FifaColors.border),
-      ),
-      child: Row(
-        children: [
-          Icon(
-            data.usingApiFixtures ? Icons.cloud_done : Icons.storage_outlined,
-            color: color,
-            size: 20,
-          ),
-          const SizedBox(width: 10),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  source,
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: const TextStyle(fontWeight: FontWeight.w900),
-                ),
-                const SizedBox(height: 2),
-                Text(
-                  details,
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: Theme.of(
-                    context,
-                  ).textTheme.bodySmall?.copyWith(color: FifaColors.muted),
-                ),
-              ],
-            ),
-          ),
-          const SizedBox(width: 8),
-          Tooltip(
-            message: data.apiEnabled
-                ? 'Refresh API-Football fixtures and predictions'
-                : 'API-Football is disabled in this build',
-            child: IconButton.filledTonal(
-              onPressed:
-                  data.apiEnabled &&
-                      !data.isRefreshing &&
-                      !data.isRefreshingPredictions &&
-                      !data.isRefreshingResults
-                  ? () => unawaited(data.refreshApiData(forceResults: true))
-                  : null,
-              icon:
-                  data.isRefreshing ||
-                      data.isRefreshingPredictions ||
-                      data.isRefreshingResults
-                  ? const SizedBox(
-                      width: 18,
-                      height: 18,
-                      child: CircularProgressIndicator(strokeWidth: 2),
-                    )
-                  : const Icon(Icons.sync),
-            ),
-          ),
-        ],
       ),
     );
   }
@@ -4204,8 +4087,8 @@ class ResultsMatchDetailsPanel extends StatelessWidget {
               StatusPill(icon: Icons.stadium, label: match.city),
               if (details != null)
                 StatusPill(
-                  icon: Icons.sync,
-                  label: 'API details ${formatDateTime(details.fetchedAt)}',
+                  icon: Icons.update,
+                  label: 'Updated ${formatDateTime(details.fetchedAt)}',
                 ),
             ],
           ),
@@ -4213,9 +4096,9 @@ class ResultsMatchDetailsPanel extends StatelessWidget {
           if (!data.apiEnabled)
             const MatchDetailsNotice(
               icon: Icons.storage_outlined,
-              title: 'API details disabled',
+              title: 'Match details unavailable',
               body:
-                  'Lineups, scorers, cards and possession will load when API-Football mode is enabled.',
+                  'Lineups, scorers, cards and possession appear when official match data is available.',
             )
           else if (syncing && details == null)
             const MatchDetailsLoading()
@@ -4224,10 +4107,10 @@ class ResultsMatchDetailsPanel extends StatelessWidget {
           else
             MatchDetailsNotice(
               icon: Icons.info_outline,
-              title: 'No API match details',
+              title: 'Match details unavailable',
               body:
                   error ??
-                  'This match does not have API-Football detail data yet.',
+                  'Lineups, events and statistics have not been published yet.',
             ),
         ],
       ),
@@ -4245,7 +4128,7 @@ class MatchDetailsLoading extends StatelessWidget {
       children: [
         LinearProgressIndicator(minHeight: 3),
         SizedBox(height: 10),
-        Text('Loading API-Football match details...'),
+        Text('Loading match details...'),
       ],
     );
   }
@@ -4302,7 +4185,7 @@ class ApiMatchDetailsView extends StatelessWidget {
         icon: Icons.info_outline,
         title: 'Details not published yet',
         body:
-            'API-Football returned the fixture, but events, lineups and statistics are still empty.',
+            'Events, lineups and statistics are still empty for this fixture.',
       );
     }
 
@@ -4342,7 +4225,7 @@ class ApiMatchDetailsView extends StatelessWidget {
           const SizedBox(height: 14),
           MatchDetailsNotice(
             icon: Icons.warning_amber,
-            title: 'Partial API response',
+            title: 'Partial match data',
             body: details.errors.join(' • '),
           ),
         ],
@@ -5991,7 +5874,7 @@ class TeamWorldCupRecordBand extends StatelessWidget {
                           message: teamWorldCupRecordSourceName,
                           child: StatusPill(
                             icon: Icons.verified_outlined,
-                            label: 'API-Football cards',
+                            label: 'Verified team data',
                           ),
                         ),
                       ],
@@ -6588,7 +6471,7 @@ class TeamOverviewTab extends StatelessWidget {
         const SizedBox(height: 24),
         const SectionHeader(
           title: 'Model profile',
-          subtitle: 'Algorithm v2 factors on the available seed data',
+          subtitle: 'Team strength, form, attack, defense and squad depth',
         ),
         const SizedBox(height: 12),
         TeamModelBreakdown(profile: profile),
@@ -6923,7 +6806,7 @@ class SquadSnapshotPanel extends StatelessWidget {
                 ),
                 const SizedBox(height: 4),
                 Text(
-                  '$playerCount-player squad snapshot from API-Football lineups. Local metadata is retained where names matched.',
+                  '$playerCount-player squad snapshot with coach and squad metadata.',
                   maxLines: 2,
                   overflow: TextOverflow.ellipsis,
                   style: Theme.of(
@@ -7495,7 +7378,7 @@ class TeamDetailSheet extends StatelessWidget {
                   icon: Icons.groups,
                   title: 'Official squad pending',
                   body:
-                      'The seed profile keeps space for players, club, position and number.',
+                      'Player names, clubs, positions and shirt numbers will appear here when available.',
                 )
               else
                 Card(

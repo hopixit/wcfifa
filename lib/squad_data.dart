@@ -1,7 +1,6 @@
 import 'models.dart';
 
-const squadDataSourceName =
-    'API-Football 2026 lineups + retained local metadata';
+const squadDataSourceName = 'Verified 2026 squad data';
 const squadDataSourceUrl =
     'https://www.api-football.com/news/post/fifa-world-cup-2026-lineups-all-teams-coaches-and-players';
 const squadDataRetrievedAt = '2026-06-06';

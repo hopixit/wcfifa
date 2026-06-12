@@ -173,7 +173,7 @@ class WorldCupDataController extends ChangeNotifier {
         await refreshPredictions();
       } else {
         _lastError =
-            'API-Football returned ${result.rawFixtureCount} fixtures, but none matched local teams.';
+            'The match feed returned ${result.rawFixtureCount} fixtures, but none matched local teams.';
       }
     } catch (error) {
       _lastError = '$error';
@@ -322,12 +322,12 @@ class ApiFootballClient {
 
     final decoded = jsonDecode(response.body);
     if (decoded is! Map<String, dynamic>) {
-      throw const ApiFootballException('Unexpected API-Football JSON payload.');
+      throw const ApiFootballException('Unexpected match feed response.');
     }
 
     final errors = decoded['errors'];
     if (errors is Map && errors.isNotEmpty) {
-      throw ApiFootballException('API-Football error: ${jsonEncode(errors)}');
+      throw ApiFootballException('Match feed error: ${jsonEncode(errors)}');
     }
 
     final rawFixtures = decoded['response'] is List
@@ -405,7 +405,7 @@ class ApiFootballClient {
     final fixtureId = _apiFixtureIdFromMatch(match);
     if (fixtureId == null) {
       throw ApiFootballException(
-        'No API-Football fixture id is available for this match.',
+        'No provider fixture id is available for this match.',
       );
     }
 
@@ -423,9 +423,7 @@ class ApiFootballClient {
   Future<ApiTeamRoster> fetchTeamRoster(Team team) async {
     final apiTeamId = await _apiTeamIdFor(team);
     if (apiTeamId == null) {
-      throw ApiFootballException(
-        'No API-Football team id found for ${team.name}.',
-      );
+      throw ApiFootballException('No provider team id found for ${team.name}.');
     }
 
     final squadResponse = await _getJson(
@@ -504,11 +502,11 @@ class ApiFootballClient {
     }
     final decoded = jsonDecode(response.body);
     if (decoded is! Map<String, dynamic>) {
-      throw const ApiFootballException('Unexpected API-Football JSON payload.');
+      throw const ApiFootballException('Unexpected match feed response.');
     }
     final errors = decoded['errors'];
     if (errors is Map && errors.isNotEmpty) {
-      throw ApiFootballException('API-Football error: ${jsonEncode(errors)}');
+      throw ApiFootballException('Match feed error: ${jsonEncode(errors)}');
     }
     return decoded;
   }
@@ -788,7 +786,7 @@ class ApiFixturePrediction {
         .clamp(0.08, 0.9)
         .toDouble();
     final notes = [
-      'API-Football daily prediction uses provider form, head-to-head and historical comparison.',
+      'Daily forecast uses provider form, head-to-head and historical comparison.',
       if (winnerName != null) 'Provider edge: $winnerName.',
       if (advice != null && advice!.trim().isNotEmpty)
         'Signal: ${advice!.trim()}.',
@@ -808,7 +806,7 @@ class ApiFixturePrediction {
       dataQuality: fallback.dataQuality,
       homeModelScore: fallback.homeModelScore,
       awayModelScore: fallback.awayModelScore,
-      sourceLabel: 'API-Football daily',
+      sourceLabel: 'Daily forecast',
     );
   }
 

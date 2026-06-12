@@ -127,7 +127,7 @@ void main() {
     expect(prediction.draw, 29);
     expect(prediction.awayWin, 24);
     expect(prediction.score, fallback.score);
-    expect(prediction.sourceLabel, 'API-Football daily');
+    expect(prediction.sourceLabel, 'Daily forecast');
   });
 
   test('api football results payload maps fixture scores', () async {
