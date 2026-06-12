@@ -1,4 +1,5 @@
 import {
+  handleMatchDetails,
   handlePredictions,
   handleResults,
   handleWorldCupRoute,
@@ -15,6 +16,11 @@ export default async function handler(request, response) {
 
   if (routeName === 'predictions') {
     await handlePredictions(request, response);
+    return;
+  }
+
+  if (routeName === 'match-details') {
+    await handleMatchDetails(request, response);
     return;
   }
 

@@ -11,6 +11,10 @@ const endpointHelp = [
   { path: '/api/news', description: 'World Cup RSS news' },
   { path: '/api/worldcup/fixtures', description: 'World Cup fixtures' },
   { path: '/api/worldcup/results', description: 'Match-day results' },
+  {
+    path: '/api/worldcup/match-details?fixture=12345',
+    description: 'Single-match events, statistics and lineups',
+  },
   { path: '/api/worldcup/predictions', description: 'Group-stage predictions' },
   { path: '/api/worldcup/standings', description: 'Group standings' },
   { path: '/api/worldcup/teams', description: 'Tournament teams' },
@@ -263,6 +267,53 @@ export async function handlePredictions(request, response) {
   }
 }
 
+export async function handleMatchDetails(request, response) {
+  if (!allowReadRequest(request, response)) return;
+
+  const fixture = queryValue(request, 'fixture');
+  if (!fixture || !/^\d+$/.test(fixture)) {
+    sendJson(response, 400, {
+      error: 'Missing or invalid fixture id',
+      message: 'Use /api/worldcup/match-details?fixture=12345',
+    });
+    return;
+  }
+
+  const parts = await Promise.all([
+    fetchMatchDetailPart('events', '/fixtures/events', { fixture }),
+    fetchMatchDetailPart('statistics', '/fixtures/statistics', { fixture }),
+    fetchMatchDetailPart('lineups', '/fixtures/lineups', { fixture }),
+  ]);
+
+  const responsePayload = {};
+  const errors = [];
+  let requestCount = 0;
+  let requestsRemainingToday = null;
+
+  for (const part of parts) {
+    requestCount += part.requestCount;
+    if (part.requestsRemainingToday != null) {
+      requestsRemainingToday = part.requestsRemainingToday;
+    }
+    responsePayload[part.name] = part.response;
+    if (part.error) errors.push(part.error);
+  }
+
+  sendJson(
+    response,
+    errors.length === parts.length ? 502 : 200,
+    {
+      generatedAt: new Date().toISOString(),
+      fixture,
+      requestCount,
+      requestsRemainingToday,
+      errors,
+      response: responsePayload,
+    },
+    { cacheSeconds: errors.length === parts.length ? 0 : 60, staleSeconds: 60 },
+  );
+}
+
 export function worldCupRouteParams(request, routeName) {
   if (routeName === 'fixtures') {
     return {
@@ -351,6 +402,64 @@ export async function handleWorldCupRoute(request, response, routeName) {
   }
 
   await handleDirectApiFootball(request, response, route);
+}
+
+async function fetchMatchDetailPart(name, endpoint, params) {
+  try {
+    const upstream = await fetchApiFootball(endpoint, params);
+    const requestsRemainingToday = asInt(
+      upstream.headers.get('x-ratelimit-requests-remaining'),
+    );
+
+    if (upstream.status < 200 || upstream.status >= 300) {
+      return {
+        name,
+        response: [],
+        requestCount: 1,
+        requestsRemainingToday,
+        error: {
+          part: name,
+          statusCode: upstream.status,
+          message: upstream.body,
+        },
+      };
+    }
+
+    const root = jsonMap(JSON.parse(upstream.body));
+    const apiErrors = root.errors;
+    if (
+      apiErrors &&
+      typeof apiErrors === 'object' &&
+      Object.keys(apiErrors).length > 0
+    ) {
+      return {
+        name,
+        response: [],
+        requestCount: 1,
+        requestsRemainingToday,
+        error: {
+          part: name,
+          statusCode: upstream.status,
+          message: JSON.stringify(apiErrors),
+        },
+      };
+    }
+
+    return {
+      name,
+      response: Array.isArray(root.response) ? root.response : [],
+      requestCount: 1,
+      requestsRemainingToday,
+    };
+  } catch (error) {
+    return {
+      name,
+      response: [],
+      requestCount: 1,
+      requestsRemainingToday: null,
+      error: { part: name, message: `${error}` },
+    };
+  }
 }
 
 async function fixturesForPredictions() {

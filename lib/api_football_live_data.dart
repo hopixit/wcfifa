@@ -56,6 +56,9 @@ class WorldCupDataController extends ChangeNotifier {
   final Map<String, ApiTeamRoster> _teamRosters = {};
   final Map<String, Future<ApiTeamRoster?>> _teamRosterRequests = {};
   String? _lastRosterError;
+  final Map<String, ApiMatchDetails> _matchDetails = {};
+  final Map<String, Future<ApiMatchDetails?>> _matchDetailsRequests = {};
+  final Map<String, String> _matchDetailsErrors = {};
 
   List<MatchEntry> get fixtures => _fixtures;
   bool get isRefreshing => _isRefreshing;
@@ -76,6 +79,9 @@ class WorldCupDataController extends ChangeNotifier {
   String? get lastResultError => _lastResultError;
   String? get lastRosterError => _lastRosterError;
   ApiTeamRoster? rosterFor(Team team) => _teamRosters[team.id];
+  ApiMatchDetails? matchDetailsFor(MatchEntry match) => _matchDetails[match.id];
+  String? matchDetailsErrorFor(MatchEntry match) =>
+      _matchDetailsErrors[match.id];
   ApiFixturePrediction? predictionFor(MatchEntry match) {
     return _predictionsByMatchId[match.id];
   }
@@ -119,6 +125,35 @@ class WorldCupDataController extends ChangeNotifier {
   }
 
   bool isRosterSyncing(Team team) => _teamRosterRequests.containsKey(team.id);
+
+  Future<ApiMatchDetails?> syncMatchDetails(MatchEntry match) {
+    if (!apiEnabled) return Future<ApiMatchDetails?>.value(null);
+    if (_matchDetails[match.id] case final cached?) {
+      return Future<ApiMatchDetails?>.value(cached);
+    }
+
+    return _matchDetailsRequests.putIfAbsent(match.id, () async {
+      _matchDetailsErrors.remove(match.id);
+      notifyListeners();
+      try {
+        final details = await _client.fetchMatchDetails(match);
+        _matchDetails[match.id] = details;
+        _requestsRemainingToday =
+            details.requestsRemainingToday ?? _requestsRemainingToday;
+        return details;
+      } catch (error) {
+        _matchDetailsErrors[match.id] = '$error';
+        return null;
+      } finally {
+        _matchDetailsRequests.remove(match.id);
+        notifyListeners();
+      }
+    });
+  }
+
+  bool isMatchDetailsSyncing(MatchEntry match) {
+    return _matchDetailsRequests.containsKey(match.id);
+  }
 
   Future<void> refreshFixtures() async {
     if (!apiEnabled || _isRefreshing) return;
@@ -366,6 +401,25 @@ class ApiFootballClient {
     );
   }
 
+  Future<ApiMatchDetails> fetchMatchDetails(MatchEntry match) async {
+    final fixtureId = _apiFixtureIdFromMatch(match);
+    if (fixtureId == null) {
+      throw ApiFootballException(
+        'No API-Football fixture id is available for this match.',
+      );
+    }
+
+    final payload = await _getJson(
+      _proxyUri('/api/worldcup/match-details', {'fixture': fixtureId}),
+    );
+
+    return ApiMatchDetails.fromProxyPayload(
+      fixtureId: fixtureId,
+      match: match,
+      payload: payload,
+    );
+  }
+
   Future<ApiTeamRoster> fetchTeamRoster(Team team) async {
     final apiTeamId = await _apiTeamIdFor(team);
     if (apiTeamId == null) {
@@ -462,6 +516,11 @@ class ApiFootballClient {
   Uri _proxyUri(String path, [Map<String, String>? queryParameters]) {
     final base = Uri.parse(_proxyBaseUrl);
     return base.replace(path: path, queryParameters: queryParameters);
+  }
+
+  String? _apiFixtureIdFromMatch(MatchEntry match) {
+    final matchId = RegExp(r'^api_(\d+)$').firstMatch(match.id);
+    return matchId?.group(1);
   }
 
   MatchEntry? _matchFromApiFixture(Object? value) {
@@ -799,6 +858,309 @@ class ApiTeamRoster {
   final String? coachName;
   final List<Player> players;
   final DateTime fetchedAt;
+}
+
+class ApiMatchDetails {
+  const ApiMatchDetails({
+    required this.fixtureId,
+    required this.match,
+    required this.events,
+    required this.teamStatistics,
+    required this.lineups,
+    required this.errors,
+    required this.requestCount,
+    required this.requestsRemainingToday,
+    required this.fetchedAt,
+  });
+
+  final String fixtureId;
+  final MatchEntry match;
+  final List<ApiMatchEvent> events;
+  final List<ApiTeamMatchStatistics> teamStatistics;
+  final List<ApiMatchLineup> lineups;
+  final List<String> errors;
+  final int requestCount;
+  final int? requestsRemainingToday;
+  final DateTime fetchedAt;
+
+  bool get hasPayload =>
+      events.isNotEmpty || teamStatistics.isNotEmpty || lineups.isNotEmpty;
+
+  List<ApiMatchEvent> get goals => events.where((event) {
+    return event.type.toLowerCase() == 'goal';
+  }).toList();
+
+  List<ApiMatchEvent> get cards => events.where((event) {
+    return event.type.toLowerCase() == 'card';
+  }).toList();
+
+  List<ApiMatchEvent> get substitutions => events.where((event) {
+    return event.type.toLowerCase() == 'subst';
+  }).toList();
+
+  ApiTeamMatchStatistics? statisticsForTeamName(String name) {
+    final normalized = ApiFootballClient._normalizeName(name);
+    for (final item in teamStatistics) {
+      if (ApiFootballClient._normalizeName(item.teamName) == normalized) {
+        return item;
+      }
+    }
+    return null;
+  }
+
+  static ApiMatchDetails fromProxyPayload({
+    required String fixtureId,
+    required MatchEntry match,
+    required Map<String, dynamic> payload,
+  }) {
+    final response = ApiFootballClient._asMap(payload['response']);
+    final eventsRaw = response['events'] is List
+        ? response['events'] as List<dynamic>
+        : const <dynamic>[];
+    final statisticsRaw = response['statistics'] is List
+        ? response['statistics'] as List<dynamic>
+        : const <dynamic>[];
+    final lineupsRaw = response['lineups'] is List
+        ? response['lineups'] as List<dynamic>
+        : const <dynamic>[];
+    final errorsRaw = payload['errors'] is List
+        ? payload['errors'] as List<dynamic>
+        : const <dynamic>[];
+    final generatedAt = payload['generatedAt']?.toString();
+
+    return ApiMatchDetails(
+      fixtureId: fixtureId,
+      match: match,
+      events: [
+        for (final item in eventsRaw)
+          if (ApiMatchEvent.fromJson(item) case final event?) event,
+      ],
+      teamStatistics: [
+        for (final item in statisticsRaw)
+          if (ApiTeamMatchStatistics.fromJson(item) case final stats?) stats,
+      ],
+      lineups: [
+        for (final item in lineupsRaw)
+          if (ApiMatchLineup.fromJson(item) case final lineup?) lineup,
+      ],
+      errors: [
+        for (final item in errorsRaw)
+          if (item != null) item.toString(),
+      ],
+      requestCount: ApiFootballClient._asInt(payload['requestCount']) ?? 0,
+      requestsRemainingToday: ApiFootballClient._asInt(
+        payload['requestsRemainingToday'],
+      ),
+      fetchedAt: generatedAt == null
+          ? DateTime.now()
+          : DateTime.tryParse(generatedAt)?.toLocal() ?? DateTime.now(),
+    );
+  }
+}
+
+class ApiMatchEvent {
+  const ApiMatchEvent({
+    required this.elapsed,
+    required this.extra,
+    required this.teamName,
+    required this.playerName,
+    required this.assistName,
+    required this.type,
+    required this.detail,
+    required this.comments,
+  });
+
+  final int? elapsed;
+  final int? extra;
+  final String? teamName;
+  final String? playerName;
+  final String? assistName;
+  final String type;
+  final String detail;
+  final String? comments;
+
+  String get minuteLabel {
+    if (elapsed == null) return '--';
+    if (extra != null && extra! > 0) return "$elapsed+$extra'";
+    return "$elapsed'";
+  }
+
+  String get description {
+    final parts = [
+      if (playerName != null && playerName!.trim().isNotEmpty) playerName!,
+      if (assistName != null && assistName!.trim().isNotEmpty)
+        'Assist: $assistName',
+      if (comments != null && comments!.trim().isNotEmpty) comments!,
+    ];
+    return parts.isEmpty ? detail : parts.join(' • ');
+  }
+
+  static ApiMatchEvent? fromJson(Object? value) {
+    final item = ApiFootballClient._asMap(value);
+    final time = ApiFootballClient._asMap(item['time']);
+    final team = ApiFootballClient._asMap(item['team']);
+    final player = ApiFootballClient._asMap(item['player']);
+    final assist = ApiFootballClient._asMap(item['assist']);
+    final type = item['type']?.toString();
+    final detail = item['detail']?.toString();
+    if (type == null || detail == null) return null;
+
+    return ApiMatchEvent(
+      elapsed: ApiFootballClient._asInt(time['elapsed']),
+      extra: ApiFootballClient._asInt(time['extra']),
+      teamName: _cleanString(team['name']),
+      playerName: _cleanString(player['name']),
+      assistName: _cleanString(assist['name']),
+      type: type,
+      detail: detail,
+      comments: _cleanString(item['comments']),
+    );
+  }
+}
+
+class ApiTeamMatchStatistics {
+  const ApiTeamMatchStatistics({
+    required this.teamName,
+    required this.statistics,
+  });
+
+  final String teamName;
+  final List<ApiMatchStatistic> statistics;
+
+  String? valueFor(String type) {
+    final normalized = ApiFootballClient._normalizeName(type);
+    for (final stat in statistics) {
+      if (ApiFootballClient._normalizeName(stat.type) == normalized) {
+        return stat.displayValue;
+      }
+    }
+    return null;
+  }
+
+  static ApiTeamMatchStatistics? fromJson(Object? value) {
+    final item = ApiFootballClient._asMap(value);
+    final team = ApiFootballClient._asMap(item['team']);
+    final teamName = _cleanString(team['name']);
+    if (teamName == null) return null;
+    final rawStats = item['statistics'] is List
+        ? item['statistics'] as List<dynamic>
+        : const <dynamic>[];
+
+    return ApiTeamMatchStatistics(
+      teamName: teamName,
+      statistics: [
+        for (final item in rawStats)
+          if (ApiMatchStatistic.fromJson(item) case final stat?) stat,
+      ],
+    );
+  }
+}
+
+class ApiMatchStatistic {
+  const ApiMatchStatistic({required this.type, required this.displayValue});
+
+  final String type;
+  final String displayValue;
+
+  static ApiMatchStatistic? fromJson(Object? value) {
+    final item = ApiFootballClient._asMap(value);
+    final type = _cleanString(item['type']);
+    if (type == null) return null;
+    final rawValue = item['value'];
+    final displayValue = rawValue == null || rawValue.toString().trim().isEmpty
+        ? '-'
+        : rawValue.toString();
+    return ApiMatchStatistic(type: type, displayValue: displayValue);
+  }
+}
+
+class ApiMatchLineup {
+  const ApiMatchLineup({
+    required this.teamName,
+    required this.formation,
+    required this.coachName,
+    required this.startXI,
+    required this.substitutes,
+  });
+
+  final String teamName;
+  final String? formation;
+  final String? coachName;
+  final List<ApiLineupPlayer> startXI;
+  final List<ApiLineupPlayer> substitutes;
+
+  static ApiMatchLineup? fromJson(Object? value) {
+    final item = ApiFootballClient._asMap(value);
+    final team = ApiFootballClient._asMap(item['team']);
+    final coach = ApiFootballClient._asMap(item['coach']);
+    final teamName = _cleanString(team['name']);
+    if (teamName == null) return null;
+    final startRaw = item['startXI'] is List
+        ? item['startXI'] as List<dynamic>
+        : const <dynamic>[];
+    final substituteRaw = item['substitutes'] is List
+        ? item['substitutes'] as List<dynamic>
+        : const <dynamic>[];
+
+    return ApiMatchLineup(
+      teamName: teamName,
+      formation: _cleanString(item['formation']),
+      coachName: _cleanString(coach['name']),
+      startXI: [
+        for (final item in startRaw)
+          if (ApiLineupPlayer.fromJson(item) case final player?) player,
+      ],
+      substitutes: [
+        for (final item in substituteRaw)
+          if (ApiLineupPlayer.fromJson(item) case final player?) player,
+      ],
+    );
+  }
+}
+
+class ApiLineupPlayer {
+  const ApiLineupPlayer({
+    required this.name,
+    required this.number,
+    required this.position,
+    required this.grid,
+  });
+
+  final String name;
+  final int? number;
+  final String? position;
+  final String? grid;
+
+  String get label {
+    final numberLabel = number == null ? '' : '$number. ';
+    final meta = [
+      if (position != null) position,
+      if (grid != null) grid,
+    ].join(' • ');
+    return meta.isEmpty ? '$numberLabel$name' : '$numberLabel$name ($meta)';
+  }
+
+  static ApiLineupPlayer? fromJson(Object? value) {
+    final item = ApiFootballClient._asMap(value);
+    final player = ApiFootballClient._asMap(item['player']);
+    final name = _cleanString(player['name']);
+    if (name == null) return null;
+
+    return ApiLineupPlayer(
+      name: name,
+      number: ApiFootballClient._asInt(player['number']),
+      position: _cleanString(player['pos']),
+      grid: _cleanString(player['grid']),
+    );
+  }
+}
+
+String? _cleanString(Object? value) {
+  final text = value?.toString().trim();
+  if (text == null || text.isEmpty || text.toLowerCase() == 'null') {
+    return null;
+  }
+  return text;
 }
 
 class ApiFootballException implements Exception {

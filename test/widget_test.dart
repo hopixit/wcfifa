@@ -175,6 +175,111 @@ void main() {
     expect(match.scoreLabel, '2:1');
   });
 
+  test(
+    'api football match details payload maps events stats and lineups',
+    () async {
+      final match = MatchEntry(
+        id: 'api_12345',
+        group: 'B',
+        homeTeamId: 'can',
+        awayTeamId: 'bih',
+        kickoffUtc: DateTime.utc(2026, 6, 12, 19),
+        venue: 'Toronto Stadium',
+        city: 'Toronto',
+        status: MatchStatus.finished,
+        homeScore: 1,
+        awayScore: 0,
+      );
+      final client = ApiFootballClient(
+        proxyBaseUrl: 'http://proxy.test',
+        client: MockClient((request) async {
+          expect(request.url.path, '/api/worldcup/match-details');
+          expect(request.url.queryParameters['fixture'], '12345');
+          return http.Response(
+            jsonEncode({
+              'generatedAt': '2026-06-12T21:10:00.000Z',
+              'fixture': '12345',
+              'requestCount': 3,
+              'requestsRemainingToday': 88,
+              'errors': const [],
+              'response': {
+                'events': [
+                  {
+                    'time': {'elapsed': 22, 'extra': null},
+                    'team': {'name': 'Canada'},
+                    'player': {'name': 'Jonathan David'},
+                    'assist': {'name': 'Alphonso Davies'},
+                    'type': 'Goal',
+                    'detail': 'Normal Goal',
+                    'comments': null,
+                  },
+                  {
+                    'time': {'elapsed': 71, 'extra': 2},
+                    'team': {'name': 'Bosnia and Herzegovina'},
+                    'player': {'name': 'Example Defender'},
+                    'assist': {'name': null},
+                    'type': 'Card',
+                    'detail': 'Yellow Card',
+                    'comments': 'Foul',
+                  },
+                ],
+                'statistics': [
+                  {
+                    'team': {'name': 'Canada'},
+                    'statistics': [
+                      {'type': 'Ball Possession', 'value': '58%'},
+                      {'type': 'Shots on Goal', 'value': 6},
+                    ],
+                  },
+                  {
+                    'team': {'name': 'Bosnia and Herzegovina'},
+                    'statistics': [
+                      {'type': 'Ball Possession', 'value': '42%'},
+                      {'type': 'Shots on Goal', 'value': 2},
+                    ],
+                  },
+                ],
+                'lineups': [
+                  {
+                    'team': {'name': 'Canada'},
+                    'formation': '4-2-3-1',
+                    'coach': {'name': 'Jesse Marsch'},
+                    'startXI': [
+                      {
+                        'player': {
+                          'name': 'Jonathan David',
+                          'number': 20,
+                          'pos': 'F',
+                          'grid': '4:2',
+                        },
+                      },
+                    ],
+                    'substitutes': const [],
+                  },
+                ],
+              },
+            }),
+            200,
+          );
+        }),
+      );
+
+      final details = await client.fetchMatchDetails(match);
+
+      expect(details.requestCount, 3);
+      expect(details.requestsRemainingToday, 88);
+      expect(details.goals.single.playerName, 'Jonathan David');
+      expect(details.goals.single.assistName, 'Alphonso Davies');
+      expect(details.cards.single.minuteLabel, "71+2'");
+      expect(
+        details.statisticsForTeamName('Canada')!.valueFor('Ball Possession'),
+        '58%',
+      );
+      expect(details.lineups.single.formation, '4-2-3-1');
+      expect(details.lineups.single.startXI.single.label, contains('20.'));
+    },
+  );
+
   test('tournament outlook is deterministic and monotonic', () {
     final model = PredictionModel();
 

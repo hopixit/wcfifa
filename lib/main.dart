@@ -144,6 +144,7 @@ class FifaColors {
   static const red = Color(0xFFB6002C);
   static const orange = Color(0xFFFA4119);
   static const focusYellow = Color(0xFFFFDC4E);
+  static const qualifyGreen = Color(0xFF11845B);
   static const surface = Color(0xFFF7F9FC);
   static const border = Color(0xFFE4E8F0);
   static const muted = Color(0xFF505B73);
@@ -158,6 +159,8 @@ class AppShell extends StatefulWidget {
 }
 
 class _AppShellState extends State<AppShell> {
+  static const _resultsIndex = 2;
+
   int _selectedIndex = 0;
   bool _handledInitialTeamLink = false;
 
@@ -201,7 +204,10 @@ class _AppShellState extends State<AppShell> {
             ? tournamentFavorites(limit: 10)
             : const <TournamentFavorite>[];
         final screens = [
-          const HomeScreen(),
+          HomeScreen(
+            onViewAllMatches: () =>
+                setState(() => _selectedIndex = _resultsIndex),
+          ),
           const MatchesScreen(),
           const ResultsScreen(),
           const GroupsScreen(),
@@ -699,11 +705,15 @@ class _TeamSearchSheetState extends State<TeamSearchSheet> {
 }
 
 class HomeScreen extends StatelessWidget {
-  const HomeScreen({super.key});
+  const HomeScreen({required this.onViewAllMatches, super.key});
+
+  final VoidCallback onViewAllMatches;
 
   @override
   Widget build(BuildContext context) {
+    final worldCupData = WorldCupDataScope.of(context);
     final model = PredictionModel();
+    final spotlightMatches = _homeSpotlightMatches(worldCupData.fixtures);
     final advanceEntries = [...SeedData.teams]
       ..sort(
         (a, b) => model
@@ -716,6 +726,12 @@ class HomeScreen extends StatelessWidget {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
+          HomeMatchesSpotlight(
+            matches: spotlightMatches,
+            totalMatches: worldCupData.fixtures.length,
+            onViewAllMatches: onViewAllMatches,
+          ),
+          const SizedBox(height: 16),
           const HomeFuturesIntro(),
           const SizedBox(height: 16),
           const HomeFuturesLane(
@@ -770,6 +786,240 @@ class HomeScreen extends StatelessWidget {
           const SizedBox(height: 24),
           const HomeFooter(),
         ],
+      ),
+    );
+  }
+}
+
+List<MatchEntry> _homeSpotlightMatches(
+  List<MatchEntry> fixtures, {
+  DateTime? nowUtc,
+  int limit = 4,
+}) {
+  final now = nowUtc ?? DateTime.now().toUtc();
+  final live =
+      fixtures.where((match) => match.status == MatchStatus.live).toList()
+        ..sort((a, b) => a.kickoffUtc.compareTo(b.kickoffUtc));
+  final upcoming = fixtures.where((match) {
+    return match.status == MatchStatus.upcoming &&
+        !match.kickoffUtc.isBefore(now);
+  }).toList()..sort((a, b) => a.kickoffUtc.compareTo(b.kickoffUtc));
+
+  final selected = [...live, ...upcoming];
+  if (selected.isNotEmpty) return selected.take(limit).toList();
+
+  final fallback = fixtures.where((match) {
+    return match.status != MatchStatus.finished;
+  }).toList()..sort((a, b) => a.kickoffUtc.compareTo(b.kickoffUtc));
+  return fallback.take(limit).toList();
+}
+
+class HomeMatchesSpotlight extends StatelessWidget {
+  const HomeMatchesSpotlight({
+    required this.matches,
+    required this.totalMatches,
+    required this.onViewAllMatches,
+    super.key,
+  });
+
+  final List<MatchEntry> matches;
+  final int totalMatches;
+  final VoidCallback onViewAllMatches;
+
+  @override
+  Widget build(BuildContext context) {
+    final liveCount = matches
+        .where((match) => match.status == MatchStatus.live)
+        .length;
+    final title = liveCount > 0 ? 'Live matches' : 'Upcoming matches';
+    final subtitle = liveCount > 0
+        ? '$liveCount live now, with the next fixtures below'
+        : 'Next fixtures at the top of the home page';
+
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: FifaColors.white,
+        borderRadius: BorderRadius.circular(8),
+        border: Border.all(color: FifaColors.border),
+      ),
+      child: LayoutBuilder(
+        builder: (context, constraints) {
+          final compact = constraints.maxWidth < 720;
+          final heading = Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                title,
+                style: Theme.of(
+                  context,
+                ).textTheme.titleLarge?.copyWith(fontWeight: FontWeight.w900),
+              ),
+              const SizedBox(height: 4),
+              Text(
+                subtitle,
+                style: Theme.of(
+                  context,
+                ).textTheme.bodyMedium?.copyWith(color: FifaColors.muted),
+              ),
+            ],
+          );
+          final action = FilledButton.icon(
+            onPressed: onViewAllMatches,
+            icon: const Icon(Icons.list_alt),
+            label: Text('View all matches ($totalMatches)'),
+          );
+
+          return Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              if (compact) ...[
+                heading,
+                const SizedBox(height: 12),
+                Align(alignment: Alignment.centerLeft, child: action),
+              ] else
+                Row(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Expanded(child: heading),
+                    const SizedBox(width: 16),
+                    action,
+                  ],
+                ),
+              const SizedBox(height: 14),
+              if (matches.isEmpty)
+                Text(
+                  'No live or upcoming matches are available.',
+                  style: Theme.of(
+                    context,
+                  ).textTheme.bodyMedium?.copyWith(color: FifaColors.muted),
+                )
+              else
+                Material(
+                  color: FifaColors.white,
+                  child: Column(
+                    children: [
+                      for (
+                        var index = 0;
+                        index < matches.length;
+                        index += 1
+                      ) ...[
+                        HomeSpotlightMatchRow(match: matches[index]),
+                        if (index != matches.length - 1)
+                          const Divider(height: 1),
+                      ],
+                    ],
+                  ),
+                ),
+            ],
+          );
+        },
+      ),
+    );
+  }
+}
+
+class HomeSpotlightMatchRow extends StatelessWidget {
+  const HomeSpotlightMatchRow({required this.match, super.key});
+
+  final MatchEntry match;
+
+  @override
+  Widget build(BuildContext context) {
+    final home = SeedData.teamById(match.homeTeamId);
+    final away = SeedData.teamById(match.awayTeamId);
+    final prediction = predictionForMatch(context, match);
+
+    return InkWell(
+      borderRadius: BorderRadius.circular(8),
+      onTap: () => showMatchDetails(context, match),
+      child: Padding(
+        padding: const EdgeInsets.symmetric(vertical: 12),
+        child: LayoutBuilder(
+          builder: (context, constraints) {
+            final compact = constraints.maxWidth < 720;
+            final teams = Row(
+              children: [
+                Expanded(child: TeamBadge(team: home)),
+                const SizedBox(width: 10),
+                _HomeMatchScoreBadge(match: match),
+                const SizedBox(width: 10),
+                Expanded(child: TeamBadge(team: away, alignEnd: true)),
+              ],
+            );
+            final meta = Wrap(
+              spacing: 8,
+              runSpacing: 8,
+              crossAxisAlignment: WrapCrossAlignment.center,
+              children: [
+                StatusPill(
+                  icon: Icons.schedule,
+                  label: formatDateTime(match.kickoffUtc.toLocal()),
+                ),
+                StatusPill(label: match.status.label),
+                StatusPill(label: 'Group ${match.group}'),
+                StatusPill(
+                  icon: Icons.sports_score,
+                  label: 'Prediction ${prediction.score}',
+                ),
+              ],
+            );
+
+            if (compact) {
+              return Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [teams, const SizedBox(height: 10), meta],
+              );
+            }
+
+            return Row(
+              children: [
+                Expanded(flex: 5, child: teams),
+                const SizedBox(width: 16),
+                Expanded(flex: 4, child: meta),
+                const SizedBox(width: 8),
+                const Icon(Icons.chevron_right, color: FifaColors.muted),
+              ],
+            );
+          },
+        ),
+      ),
+    );
+  }
+}
+
+class _HomeMatchScoreBadge extends StatelessWidget {
+  const _HomeMatchScoreBadge({required this.match});
+
+  final MatchEntry match;
+
+  @override
+  Widget build(BuildContext context) {
+    final live = match.status == MatchStatus.live;
+    final color = live
+        ? FifaColors.red
+        : match.hasResult
+        ? FifaColors.blueDark
+        : FifaColors.navy;
+
+    return Container(
+      width: 58,
+      height: 34,
+      alignment: Alignment.center,
+      decoration: BoxDecoration(
+        color: color.withValues(alpha: live ? 0.12 : 0.08),
+        borderRadius: BorderRadius.circular(8),
+        border: Border.all(color: color.withValues(alpha: 0.28)),
+      ),
+      child: Text(
+        match.hasResult ? match.scoreLabel : 'vs',
+        maxLines: 1,
+        style: TextStyle(
+          color: color,
+          fontWeight: FontWeight.w900,
+          fontSize: 16,
+        ),
       ),
     );
   }
@@ -3774,13 +4024,46 @@ class ResultsMatchList extends StatelessWidget {
   }
 }
 
-class ResultsMatchRow extends StatelessWidget {
+class ResultsMatchRow extends StatefulWidget {
   const ResultsMatchRow({required this.match, super.key});
 
   final MatchEntry match;
 
   @override
+  State<ResultsMatchRow> createState() => _ResultsMatchRowState();
+}
+
+class _ResultsMatchRowState extends State<ResultsMatchRow> {
+  bool _expanded = false;
+  bool _requestedDetails = false;
+
+  bool get _canExpand {
+    final kickoffPassed = !widget.match.kickoffUtc.isAfter(
+      DateTime.now().toUtc(),
+    );
+    return widget.match.status == MatchStatus.live ||
+        widget.match.status == MatchStatus.finished ||
+        kickoffPassed;
+  }
+
+  void _toggleExpanded() {
+    if (!_canExpand) return;
+    setState(() {
+      _expanded = !_expanded;
+    });
+    if (_expanded) _requestDetails();
+  }
+
+  void _requestDetails() {
+    if (_requestedDetails) return;
+    _requestedDetails = true;
+    final data = WorldCupDataScope.of(context);
+    unawaited(data.syncMatchDetails(widget.match));
+  }
+
+  @override
   Widget build(BuildContext context) {
+    final match = widget.match;
     final home = SeedData.teamById(match.homeTeamId);
     final away = SeedData.teamById(match.awayTeamId);
     final kickoff = formatDateTime(match.kickoffUtc.toLocal());
@@ -3797,45 +4080,656 @@ class ResultsMatchRow extends StatelessWidget {
               ResultScoreBox(match: match),
               const SizedBox(width: 10),
               Expanded(child: TeamBadge(team: away, alignEnd: true)),
+              if (!compact && _canExpand) ...[
+                const SizedBox(width: 8),
+                Tooltip(
+                  message: _expanded
+                      ? 'Hide match details'
+                      : 'Show match details',
+                  child: IconButton.filledTonal(
+                    onPressed: _toggleExpanded,
+                    icon: Icon(
+                      _expanded ? Icons.expand_less : Icons.chevron_right,
+                    ),
+                  ),
+                ),
+              ],
             ],
           );
 
-          if (compact) {
-            return Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  kickoff,
-                  style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                    color: FifaColors.muted,
-                    fontWeight: FontWeight.w700,
-                  ),
+          final rowContent = compact
+              ? Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Row(
+                      children: [
+                        Expanded(
+                          child: Text(
+                            kickoff,
+                            style: Theme.of(context).textTheme.bodySmall
+                                ?.copyWith(
+                                  color: FifaColors.muted,
+                                  fontWeight: FontWeight.w700,
+                                ),
+                          ),
+                        ),
+                        if (_canExpand)
+                          Tooltip(
+                            message: _expanded
+                                ? 'Hide match details'
+                                : 'Show match details',
+                            child: IconButton.filledTonal(
+                              onPressed: _toggleExpanded,
+                              icon: Icon(
+                                _expanded
+                                    ? Icons.expand_less
+                                    : Icons.chevron_right,
+                              ),
+                            ),
+                          ),
+                      ],
+                    ),
+                    const SizedBox(height: 10),
+                    matchRow,
+                  ],
+                )
+              : Row(
+                  children: [
+                    SizedBox(
+                      width: 104,
+                      child: Text(
+                        kickoff,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                          color: FifaColors.muted,
+                          fontWeight: FontWeight.w700,
+                        ),
+                      ),
+                    ),
+                    const SizedBox(width: 12),
+                    Expanded(child: matchRow),
+                  ],
+                );
+
+          if (!_expanded) return rowContent;
+
+          return Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              rowContent,
+              const SizedBox(height: 14),
+              ResultsMatchDetailsPanel(match: match),
+            ],
+          );
+        },
+      ),
+    );
+  }
+}
+
+class ResultsMatchDetailsPanel extends StatelessWidget {
+  const ResultsMatchDetailsPanel({required this.match, super.key});
+
+  final MatchEntry match;
+
+  @override
+  Widget build(BuildContext context) {
+    final data = WorldCupDataScope.of(context);
+    final details = data.matchDetailsFor(match);
+    final syncing = data.isMatchDetailsSyncing(match);
+    final error = data.matchDetailsErrorFor(match);
+
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(14),
+      decoration: BoxDecoration(
+        color: FifaColors.surface,
+        borderRadius: BorderRadius.circular(8),
+        border: Border.all(color: FifaColors.border),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Wrap(
+            spacing: 8,
+            runSpacing: 8,
+            crossAxisAlignment: WrapCrossAlignment.center,
+            children: [
+              StatusPill(label: match.status.label),
+              StatusPill(
+                icon: Icons.sports_score,
+                label: 'Score ${match.scoreLabel}',
+              ),
+              StatusPill(icon: Icons.stadium, label: match.city),
+              if (details != null)
+                StatusPill(
+                  icon: Icons.sync,
+                  label: 'API details ${formatDateTime(details.fetchedAt)}',
                 ),
-                const SizedBox(height: 10),
-                matchRow,
+            ],
+          ),
+          const SizedBox(height: 12),
+          if (!data.apiEnabled)
+            const MatchDetailsNotice(
+              icon: Icons.storage_outlined,
+              title: 'API details disabled',
+              body:
+                  'Lineups, scorers, cards and possession will load when API-Football mode is enabled.',
+            )
+          else if (syncing && details == null)
+            const MatchDetailsLoading()
+          else if (details != null)
+            ApiMatchDetailsView(details: details)
+          else
+            MatchDetailsNotice(
+              icon: Icons.info_outline,
+              title: 'No API match details',
+              body:
+                  error ??
+                  'This match does not have API-Football detail data yet.',
+            ),
+        ],
+      ),
+    );
+  }
+}
+
+class MatchDetailsLoading extends StatelessWidget {
+  const MatchDetailsLoading({super.key});
+
+  @override
+  Widget build(BuildContext context) {
+    return const Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        LinearProgressIndicator(minHeight: 3),
+        SizedBox(height: 10),
+        Text('Loading API-Football match details...'),
+      ],
+    );
+  }
+}
+
+class MatchDetailsNotice extends StatelessWidget {
+  const MatchDetailsNotice({
+    required this.icon,
+    required this.title,
+    required this.body,
+    super.key,
+  });
+
+  final IconData icon;
+  final String title;
+  final String body;
+
+  @override
+  Widget build(BuildContext context) {
+    return Row(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Icon(icon, color: FifaColors.muted),
+        const SizedBox(width: 10),
+        Expanded(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(title, style: const TextStyle(fontWeight: FontWeight.w900)),
+              const SizedBox(height: 3),
+              Text(
+                body,
+                style: Theme.of(
+                  context,
+                ).textTheme.bodySmall?.copyWith(color: FifaColors.muted),
+              ),
+            ],
+          ),
+        ),
+      ],
+    );
+  }
+}
+
+class ApiMatchDetailsView extends StatelessWidget {
+  const ApiMatchDetailsView({required this.details, super.key});
+
+  final ApiMatchDetails details;
+
+  @override
+  Widget build(BuildContext context) {
+    if (!details.hasPayload) {
+      return const MatchDetailsNotice(
+        icon: Icons.info_outline,
+        title: 'Details not published yet',
+        body:
+            'API-Football returned the fixture, but events, lineups and statistics are still empty.',
+      );
+    }
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        if (details.goals.isNotEmpty) ...[
+          ApiEventsSection(
+            title: 'Goalscorers',
+            events: details.goals,
+            icon: Icons.sports_soccer,
+          ),
+          const SizedBox(height: 14),
+        ],
+        if (details.cards.isNotEmpty) ...[
+          ApiEventsSection(
+            title: 'Cards',
+            events: details.cards,
+            icon: Icons.style,
+          ),
+          const SizedBox(height: 14),
+        ],
+        if (details.events.isNotEmpty) ...[
+          ApiEventsSection(
+            title: 'Match timeline',
+            events: details.events,
+            icon: Icons.timeline,
+          ),
+          const SizedBox(height: 14),
+        ],
+        if (details.teamStatistics.isNotEmpty) ...[
+          ApiStatisticsSection(details: details),
+          const SizedBox(height: 14),
+        ],
+        if (details.lineups.isNotEmpty) ApiLineupsSection(details: details),
+        if (details.errors.isNotEmpty) ...[
+          const SizedBox(height: 14),
+          MatchDetailsNotice(
+            icon: Icons.warning_amber,
+            title: 'Partial API response',
+            body: details.errors.join(' • '),
+          ),
+        ],
+      ],
+    );
+  }
+}
+
+class ApiEventsSection extends StatelessWidget {
+  const ApiEventsSection({
+    required this.title,
+    required this.events,
+    required this.icon,
+    super.key,
+  });
+
+  final String title;
+  final List<ApiMatchEvent> events;
+  final IconData icon;
+
+  @override
+  Widget build(BuildContext context) {
+    final ordered = [...events]
+      ..sort((a, b) {
+        final elapsed = (a.elapsed ?? 0).compareTo(b.elapsed ?? 0);
+        if (elapsed != 0) return elapsed;
+        return (a.extra ?? 0).compareTo(b.extra ?? 0);
+      });
+
+    return MatchDetailSection(
+      title: title,
+      icon: icon,
+      child: Column(
+        children: [
+          for (var index = 0; index < ordered.length; index += 1) ...[
+            ApiEventRow(event: ordered[index]),
+            if (index != ordered.length - 1) const Divider(height: 12),
+          ],
+        ],
+      ),
+    );
+  }
+}
+
+class ApiEventRow extends StatelessWidget {
+  const ApiEventRow({required this.event, super.key});
+
+  final ApiMatchEvent event;
+
+  @override
+  Widget build(BuildContext context) {
+    return Row(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        SizedBox(
+          width: 46,
+          child: Text(
+            event.minuteLabel,
+            style: const TextStyle(fontWeight: FontWeight.w900),
+          ),
+        ),
+        Expanded(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                event.detail,
+                style: const TextStyle(fontWeight: FontWeight.w800),
+              ),
+              const SizedBox(height: 2),
+              Text(
+                event.description,
+                style: Theme.of(
+                  context,
+                ).textTheme.bodySmall?.copyWith(color: FifaColors.muted),
+              ),
+            ],
+          ),
+        ),
+        if (event.teamName != null) ...[
+          const SizedBox(width: 8),
+          Text(
+            event.teamName!,
+            textAlign: TextAlign.end,
+            style: Theme.of(context).textTheme.bodySmall?.copyWith(
+              color: FifaColors.muted,
+              fontWeight: FontWeight.w700,
+            ),
+          ),
+        ],
+      ],
+    );
+  }
+}
+
+class ApiStatisticsSection extends StatelessWidget {
+  const ApiStatisticsSection({required this.details, super.key});
+
+  final ApiMatchDetails details;
+
+  @override
+  Widget build(BuildContext context) {
+    final home = SeedData.teamById(details.match.homeTeamId);
+    final away = SeedData.teamById(details.match.awayTeamId);
+    final homeStats =
+        details.statisticsForTeamName(home.name) ??
+        (details.teamStatistics.isNotEmpty
+            ? details.teamStatistics.first
+            : null);
+    final awayStats =
+        details.statisticsForTeamName(away.name) ??
+        (details.teamStatistics.length > 1 ? details.teamStatistics[1] : null);
+    final statTypes = <String>{
+      if (homeStats != null)
+        for (final stat in homeStats.statistics) stat.type,
+      if (awayStats != null)
+        for (final stat in awayStats.statistics) stat.type,
+    }.toList();
+
+    return MatchDetailSection(
+      title: 'Match statistics',
+      icon: Icons.query_stats,
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          if (homeStats != null && awayStats != null) ...[
+            ApiPossessionRow(homeStats: homeStats, awayStats: awayStats),
+            const SizedBox(height: 12),
+          ],
+          for (final type in statTypes) ...[
+            ApiStatisticRow(
+              type: type,
+              homeValue: homeStats?.valueFor(type) ?? '-',
+              awayValue: awayStats?.valueFor(type) ?? '-',
+            ),
+            if (type != statTypes.last) const Divider(height: 12),
+          ],
+        ],
+      ),
+    );
+  }
+}
+
+class ApiPossessionRow extends StatelessWidget {
+  const ApiPossessionRow({
+    required this.homeStats,
+    required this.awayStats,
+    super.key,
+  });
+
+  final ApiTeamMatchStatistics homeStats;
+  final ApiTeamMatchStatistics awayStats;
+
+  @override
+  Widget build(BuildContext context) {
+    final homeValue = homeStats.valueFor('Ball Possession');
+    final awayValue = awayStats.valueFor('Ball Possession');
+    if (homeValue == null && awayValue == null) return const SizedBox.shrink();
+
+    return Container(
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: FifaColors.white,
+        borderRadius: BorderRadius.circular(8),
+        border: Border.all(color: FifaColors.border),
+      ),
+      child: Row(
+        children: [
+          const Icon(Icons.pie_chart, color: FifaColors.blueDark),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Text(
+              'Ball possession',
+              style: Theme.of(
+                context,
+              ).textTheme.titleSmall?.copyWith(fontWeight: FontWeight.w900),
+            ),
+          ),
+          Text(
+            '${homeValue ?? '-'} / ${awayValue ?? '-'}',
+            style: const TextStyle(fontWeight: FontWeight.w900),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class ApiStatisticRow extends StatelessWidget {
+  const ApiStatisticRow({
+    required this.type,
+    required this.homeValue,
+    required this.awayValue,
+    super.key,
+  });
+
+  final String type;
+  final String homeValue;
+  final String awayValue;
+
+  @override
+  Widget build(BuildContext context) {
+    return Row(
+      children: [
+        SizedBox(
+          width: 74,
+          child: Text(
+            homeValue,
+            style: const TextStyle(fontWeight: FontWeight.w900),
+          ),
+        ),
+        Expanded(
+          child: Text(
+            type,
+            textAlign: TextAlign.center,
+            style: Theme.of(
+              context,
+            ).textTheme.bodySmall?.copyWith(color: FifaColors.muted),
+          ),
+        ),
+        SizedBox(
+          width: 74,
+          child: Text(
+            awayValue,
+            textAlign: TextAlign.end,
+            style: const TextStyle(fontWeight: FontWeight.w900),
+          ),
+        ),
+      ],
+    );
+  }
+}
+
+class ApiLineupsSection extends StatelessWidget {
+  const ApiLineupsSection({required this.details, super.key});
+
+  final ApiMatchDetails details;
+
+  @override
+  Widget build(BuildContext context) {
+    return MatchDetailSection(
+      title: 'Lineups',
+      icon: Icons.groups,
+      child: LayoutBuilder(
+        builder: (context, constraints) {
+          final narrow = constraints.maxWidth < 760;
+          if (narrow) {
+            return Column(
+              children: [
+                for (
+                  var index = 0;
+                  index < details.lineups.length;
+                  index += 1
+                ) ...[
+                  ApiLineupCard(lineup: details.lineups[index]),
+                  if (index != details.lineups.length - 1)
+                    const SizedBox(height: 12),
+                ],
               ],
             );
           }
 
           return Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              SizedBox(
-                width: 104,
-                child: Text(
-                  kickoff,
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                    color: FifaColors.muted,
-                    fontWeight: FontWeight.w700,
-                  ),
-                ),
-              ),
-              const SizedBox(width: 12),
-              Expanded(child: matchRow),
+              for (
+                var index = 0;
+                index < details.lineups.length;
+                index += 1
+              ) ...[
+                Expanded(child: ApiLineupCard(lineup: details.lineups[index])),
+                if (index != details.lineups.length - 1)
+                  const SizedBox(width: 12),
+              ],
             ],
           );
         },
+      ),
+    );
+  }
+}
+
+class ApiLineupCard extends StatelessWidget {
+  const ApiLineupCard({required this.lineup, super.key});
+
+  final ApiMatchLineup lineup;
+
+  @override
+  Widget build(BuildContext context) {
+    final starters = lineup.startXI.take(11).toList();
+    final substitutes = lineup.substitutes.take(12).toList();
+
+    return Container(
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: FifaColors.white,
+        borderRadius: BorderRadius.circular(8),
+        border: Border.all(color: FifaColors.border),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            lineup.teamName,
+            style: Theme.of(
+              context,
+            ).textTheme.titleSmall?.copyWith(fontWeight: FontWeight.w900),
+          ),
+          const SizedBox(height: 6),
+          Wrap(
+            spacing: 8,
+            runSpacing: 8,
+            children: [
+              if (lineup.formation != null)
+                StatusPill(icon: Icons.account_tree, label: lineup.formation!),
+              if (lineup.coachName != null)
+                StatusPill(icon: Icons.person, label: lineup.coachName!),
+            ],
+          ),
+          const SizedBox(height: 12),
+          Text(
+            'Starting XI',
+            style: Theme.of(
+              context,
+            ).textTheme.bodySmall?.copyWith(fontWeight: FontWeight.w900),
+          ),
+          const SizedBox(height: 6),
+          for (final player in starters)
+            Text(player.label, maxLines: 1, overflow: TextOverflow.ellipsis),
+          if (substitutes.isNotEmpty) ...[
+            const SizedBox(height: 12),
+            Text(
+              'Substitutes',
+              style: Theme.of(
+                context,
+              ).textTheme.bodySmall?.copyWith(fontWeight: FontWeight.w900),
+            ),
+            const SizedBox(height: 6),
+            for (final player in substitutes)
+              Text(player.label, maxLines: 1, overflow: TextOverflow.ellipsis),
+          ],
+        ],
+      ),
+    );
+  }
+}
+
+class MatchDetailSection extends StatelessWidget {
+  const MatchDetailSection({
+    required this.title,
+    required this.icon,
+    required this.child,
+    super.key,
+  });
+
+  final String title;
+  final IconData icon;
+  final Widget child;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: FifaColors.white,
+        borderRadius: BorderRadius.circular(8),
+        border: Border.all(color: FifaColors.border),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Icon(icon, color: FifaColors.blueDark, size: 18),
+              const SizedBox(width: 8),
+              Text(
+                title,
+                style: Theme.of(
+                  context,
+                ).textTheme.titleSmall?.copyWith(fontWeight: FontWeight.w900),
+              ),
+            ],
+          ),
+          const SizedBox(height: 10),
+          child,
+        ],
       ),
     );
   }
@@ -4458,9 +5352,9 @@ class GroupCard extends StatelessWidget {
                   ).textTheme.titleLarge?.copyWith(fontWeight: FontWeight.w800),
                 ),
                 const Spacer(),
-                Text(
-                  '${rows.length} teams',
-                  style: Theme.of(context).textTheme.bodySmall,
+                const StatusPill(
+                  icon: Icons.check_circle_outline,
+                  label: 'Top 3 advance',
                 ),
               ],
             ),
@@ -4473,35 +5367,97 @@ class GroupCard extends StatelessWidget {
                 dataRowMaxHeight: 46,
                 columns: const [
                   DataColumn(label: Text('Team')),
-                  DataColumn(numeric: true, label: Text('P')),
+                  DataColumn(
+                    numeric: true,
+                    label: Tooltip(
+                      message: 'Matches played',
+                      child: Text('MP'),
+                    ),
+                  ),
                   DataColumn(numeric: true, label: Text('W')),
                   DataColumn(numeric: true, label: Text('D')),
                   DataColumn(numeric: true, label: Text('L')),
-                  DataColumn(numeric: true, label: Text('GD')),
-                  DataColumn(numeric: true, label: Text('Pts')),
+                  DataColumn(
+                    numeric: true,
+                    label: Tooltip(
+                      message: 'Goal difference',
+                      child: Text('GD'),
+                    ),
+                  ),
+                  DataColumn(
+                    numeric: true,
+                    label: Tooltip(message: 'Points', child: Text('Pts')),
+                  ),
                 ],
                 rows: [
-                  for (final row in rows)
+                  for (var index = 0; index < rows.length; index += 1)
                     DataRow(
+                      color: WidgetStatePropertyAll(
+                        index < 3
+                            ? FifaColors.qualifyGreen.withValues(alpha: 0.1)
+                            : null,
+                      ),
                       cells: [
                         DataCell(
                           SizedBox(
                             width: 210,
-                            child: TeamBadge(team: row.team),
+                            child: Row(
+                              children: [
+                                _GroupRankBadge(
+                                  rank: index + 1,
+                                  advancing: index < 3,
+                                ),
+                                const SizedBox(width: 10),
+                                Expanded(
+                                  child: TeamBadge(team: rows[index].team),
+                                ),
+                              ],
+                            ),
                           ),
                         ),
-                        DataCell(Text('${row.played}')),
-                        DataCell(Text('${row.wins}')),
-                        DataCell(Text('${row.draws}')),
-                        DataCell(Text('${row.losses}')),
-                        DataCell(Text('${row.goalDifference}')),
-                        DataCell(Text('${row.points}')),
+                        DataCell(Text('${rows[index].played}')),
+                        DataCell(Text('${rows[index].wins}')),
+                        DataCell(Text('${rows[index].draws}')),
+                        DataCell(Text('${rows[index].losses}')),
+                        DataCell(Text('${rows[index].goalDifference}')),
+                        DataCell(Text('${rows[index].points}')),
                       ],
                     ),
                 ],
               ),
             ),
           ],
+        ),
+      ),
+    );
+  }
+}
+
+class _GroupRankBadge extends StatelessWidget {
+  const _GroupRankBadge({required this.rank, required this.advancing});
+
+  final int rank;
+  final bool advancing;
+
+  @override
+  Widget build(BuildContext context) {
+    final color = advancing ? FifaColors.qualifyGreen : FifaColors.muted;
+
+    return Container(
+      width: 26,
+      height: 26,
+      alignment: Alignment.center,
+      decoration: BoxDecoration(
+        color: color.withValues(alpha: advancing ? 0.16 : 0.08),
+        borderRadius: BorderRadius.circular(8),
+        border: Border.all(color: color.withValues(alpha: 0.34)),
+      ),
+      child: Text(
+        '$rank',
+        style: TextStyle(
+          color: color,
+          fontWeight: FontWeight.w900,
+          fontSize: 12,
         ),
       ),
     );
@@ -4719,7 +5675,6 @@ void showMatchDetails(BuildContext context, MatchEntry match) {
   showModalBottomSheet<void>(
     context: context,
     isScrollControlled: true,
-    showDragHandle: true,
     builder: (context) => MatchDetailSheet(match: match),
   );
 }
@@ -6311,6 +7266,8 @@ class MatchDetailSheet extends StatelessWidget {
             controller: controller,
             padding: const EdgeInsets.fromLTRB(16, 0, 16, 24),
             children: [
+              const _SheetCloseHeader(),
+              const SizedBox(height: 8),
               Row(
                 children: [
                   Expanded(child: TeamBadge(team: home)),
@@ -6354,6 +7311,40 @@ class MatchDetailSheet extends StatelessWidget {
             ],
           );
         },
+      ),
+    );
+  }
+}
+
+class _SheetCloseHeader extends StatelessWidget {
+  const _SheetCloseHeader();
+
+  @override
+  Widget build(BuildContext context) {
+    return SizedBox(
+      height: 48,
+      child: Stack(
+        alignment: Alignment.center,
+        children: [
+          Container(
+            width: 46,
+            height: 5,
+            decoration: BoxDecoration(
+              color: FifaColors.navy.withValues(alpha: 0.9),
+              borderRadius: BorderRadius.circular(999),
+            ),
+          ),
+          Align(
+            alignment: Alignment.centerRight,
+            child: Tooltip(
+              message: 'Close',
+              child: IconButton.filledTonal(
+                onPressed: () => Navigator.of(context).pop(),
+                icon: const Icon(Icons.close),
+              ),
+            ),
+          ),
+        ],
       ),
     );
   }
